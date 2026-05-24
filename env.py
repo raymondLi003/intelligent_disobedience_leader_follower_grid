@@ -43,6 +43,52 @@ def approve_nullify_operation_protocol(
     else:
         raise ValueError(f"Invalid validator action: {validator_action}")
 
+def egocentric_view(
+    walls: np.ndarray,
+    agent_pos: tuple[int, int],
+    agent_dir: int,
+    goal_pos: tuple[int, int],
+    lava_positions,
+    view_radius:int,
+    include_lava: bool,
+)-> np.ndarray:
+    """
+        A pure egocentric and cropped view. this is shared by the env and the perfect proposer 
+        so that a predicted view always matches the real one
+    """
+    s = walls.shape[0]
+    full = np.zeros((s, s, 4), dtype = np.float32)
+    full[:, :, 0] = walls
+    # get the agent, goal and lava positions
+    full[agent_pos[0], agent_pos[1], 1] = 1.0
+    full[goal_pos[0], goal_pos[1], 2] = 1.0
+    for r, c in lava_positions:
+        full[r, c, 3] = 1.0
+    
+    # pad the arrays up to the view radius
+    pad = view_radius
+    wall_padded = np.pad(full[:, :, 0], ((pad,pad), (pad, pad)), mode = "constant", constant_values= 1.)
+    others_padded = np.pad(full[:,:,1:], ((pad,pad), (pad,pad), (0,0)), mode= "constant", constant_values= 0.)
+    padded = np.concatenate((wall_padded[..., None], others_padded), axis=-1)
+    
+    # center this on the agent and get the local view
+    row = agent_pos[0] + pad
+    col = agent_pos[1] + pad
+    local = padded[row - pad: row + pad + 1, col - pad: col + pad + 1, :]
+    
+    # rotate the agent so that the agent always faces up
+    local = np.rot90(local, k = agent_dir, axes= (0,1))
+    
+    # keep only the agent's row and everything ahead
+    center = local.shape[1]//2
+    local = local[0:pad + 1, center - pad: center + pad + 1, :]
+    
+    if not include_lava:
+        local = np.delete(local, 3, axis=-1)
+    
+    return local.astype(np.float32).copy()
+        
+    
 
 class GridWorldEnv(MultiAgentEnv):
     # Orientation encoding
@@ -367,63 +413,21 @@ class GridWorldEnv(MultiAgentEnv):
             raise ValueError("Invalid agent direction.")
 
     def _get_observation(self, agent_id: str) -> np.ndarray:
-        full_obs = np.zeros((self._size_with_walls, self._size_with_walls, 4), dtype=np.float32)
-
-        # Walls
-        full_obs[:, :, 0] = self.walls
-
-        # Agent position
-        full_obs[self.agent_pos[0], self.agent_pos[1], 1] = 1.0
-
-        # Goal
-        full_obs[self.goal_pos[0], self.goal_pos[1], 2] = 1.0
-
-        # Lava
-        for row, column in self.lava_positions:
-            full_obs[row, column, 3] = 1.0
-
-        # Padding with walls outside grid
-        pad = self.agent_view_radius
-        wall_padded = np.pad(
-            full_obs[:, :, 0],
-            ((pad, pad), (pad, pad)),
-            mode="constant",
-            constant_values=1.,
+        """
+        only the lava-blind proposer drops the lava channel. 
+        the validator can see the lava
+        """
+        include_lava = not (agent_id == "proposer" and not self.proposer_sees_lava)
+        return egocentric_view(
+            self.walls,
+            (int(self.agent_pos[0]), int(self.agent_pos[1])),
+            int(self.agent_dir),
+            (int(self.goal_pos[0]), int(self.goal_pos[1])),
+            self.lava_positions,
+            self.agent_view_radius,
+            include_lava,
         )
-
-        others_padded = np.pad(
-            full_obs[:, :, 1:],
-            ((pad, pad), (pad, pad), (0, 0)),
-            mode="constant",
-            constant_values=0.,
-        )
-        padded = np.concatenate((wall_padded[..., None], others_padded), axis=-1)
-
-        row, column = self.agent_pos
-        row += pad
-        column += pad
-        local_view = padded[
-            row - self.agent_view_radius:row + self.agent_view_radius + 1,
-            column - self.agent_view_radius:column + self.agent_view_radius + 1,
-            :
-        ]
-
-        # Rotate so agent faces UP in observation
-        # np.rot90 rotates counterclockwise
-        k = self.agent_dir  # number of 90° CCW rotations needed
-        local_view = np.rot90(local_view, k=k, axes=(0, 1))
-
-        center = local_view.shape[1] // 2
-        local_view = local_view[
-            0:self.agent_view_radius + 1,
-            center - self.agent_view_radius:center + self.agent_view_radius + 1,
-            :
-        ]
-
-        if agent_id == "proposer" and not self.proposer_sees_lava:
-            local_view = np.delete(local_view, 3, axis=-1)
-
-        return local_view.astype(np.float32).copy()
+        
 
     def render_env(self) -> None:
         if not self._pygame_initialized:
