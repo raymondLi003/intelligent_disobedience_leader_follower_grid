@@ -35,7 +35,6 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
         )
 
     if algorithm_name == "ppo":
-
         config = PPOConfig().training(
             entropy_coeff=0.2,
             train_batch_size=2048,
@@ -68,6 +67,8 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
 
 def add_env_config(config: AlgorithmConfig) -> AlgorithmConfig:
     config.environment("env")
+    # needed for turn-based env
+    config.env_runners(batch_mode="complete_episodes")
     return config
 
 
