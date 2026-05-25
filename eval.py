@@ -145,8 +145,11 @@ def run_experiment(agent_config: AgentConfig) -> None:
     print(" Validator ".center(50, '='))
     print(f"{agent_config.validator_policy} final rewards mean: {np.mean(validator_rewards)}")
     print(f"{agent_config.validator_policy} wanted behaviour: {np.mean(validator_rewards >= 0.) * 100:.2f}%")
-    print(f"{agent_config.validator_policy} good disobedience: {np.mean(validator_rewards > 0.) * 100:.2f}%")
-    print(f"{agent_config.validator_policy} bad disobedience: {np.mean(validator_rewards < 0.) * 100:.2f}%")
+    disobedience_rewards = validator_rewards[validator_rewards != 0]
+    print(f"{agent_config.validator_policy} all disobedience: {np.mean(disobedience_rewards) * 100:.2f}%")
+    print("Of these,")
+    print(f"{agent_config.validator_policy} good disobedience: {np.mean(disobedience_rewards > 0.) * 100:.2f}%")
+    print(f"{agent_config.validator_policy} bad disobedience: {np.mean(disobedience_rewards < 0.) * 100:.2f}%")
 
 
 def main():
