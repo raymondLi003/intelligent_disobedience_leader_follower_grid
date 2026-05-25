@@ -41,7 +41,7 @@ def run_experiments(agent_config: AgentConfig):
 
 def main():
     ray.init(local_mode=True)
-    for agent_config in AGENT_CONFIGS[4:5]:
+    for agent_config in AGENT_CONFIGS:
         register_env("env", lambda _: GridWorldEnv(
             size=GRID_SIZE,
             num_lava_tiles=NUM_LAVA_TILES,

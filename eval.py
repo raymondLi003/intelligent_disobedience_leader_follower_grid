@@ -156,10 +156,8 @@ def main():
     ray.init(ignore_reinit_error=True)
 
     register_env("env", lambda _: GridWorldEnv(GRID_SIZE))
-    for agent_config in AGENT_CONFIGS[4:5]:
+    for agent_config in AGENT_CONFIGS:
         run_experiment(agent_config)
-    # agent_config = AgentConfig(algorithm_name="dqn")
-    # run_experiment(agent_config)
 
     ray.shutdown()
 

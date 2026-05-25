@@ -107,15 +107,6 @@ AGENT_CONFIGS = [
         proposer_policy=ProposerPolicies.RANDOM,
         validator_policy=ValidatorPolicies.LEARNED,
     ),
-    AgentConfig(
-        proposer_policy=ProposerPolicies.LEARNED,
-        validator_policy=ValidatorPolicies.LEARNED,
-    ),
-    AgentConfig(
-        proposer_policy=ProposerPolicies.LEARNED,
-        validator_policy=ValidatorPolicies.LEARNED,
-        proposer_sees_lava=True,
-    ),
 ]
 
 LOG_DIR = _REPO_ROOT / "logs"
