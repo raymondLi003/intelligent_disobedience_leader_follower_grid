@@ -9,7 +9,7 @@ from ray.rllib.utils import override
 from ray.rllib.utils.typing import TensorStructType, TensorType
 
 
-class LearnedValidatorDQN(DefaultDQNTorchRLModule):
+class DQNWithDictOBS(DefaultDQNTorchRLModule):
     @override(RLModule)
     def _forward_train(
             self, batch: dict[str, TensorType]

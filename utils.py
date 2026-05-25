@@ -14,7 +14,7 @@ from rl_modules.catalog.catalog import (
     PPOCatalogWithImageActionEncoder,
     SACCatalogWithImageActionEncoder,
 )
-from rl_modules.dqn_modules import LearnedValidatorDQN
+from rl_modules.dqn_modules import DQNWithDictOBS
 
 _REPO_ROOT = Path(__file__).resolve().parent
 TUNER_MODEL_PATH = str(_REPO_ROOT / "best_tuner_model") + "/"
@@ -25,13 +25,13 @@ VALIDATOR_ACTION_SPACE = gym.spaces.Discrete(len(ValidatorAction))
 SINGLE_AGENT_ACTION_SPACE = gym.spaces.Discrete(len(EnvironmentAction))
 
 PROPOSER_ALGORITHM_MODULES = {
-    "dqn": DefaultDQNTorchRLModule,
+    "dqn": DQNWithDictOBS,
     "ppo": DefaultPPOTorchRLModule,
     "sac": DefaultSACTorchRLModule,
 }
 
 VALIDATOR_ALGORITHM_MODULES = {
-    "dqn": LearnedValidatorDQN,
+    "dqn": DQNWithDictOBS,
     "ppo": DefaultPPOTorchRLModule,
     "sac": DefaultSACTorchRLModule,
 }
