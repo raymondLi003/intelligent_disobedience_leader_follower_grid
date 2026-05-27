@@ -41,8 +41,8 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
         )
 
     if algorithm_name == "sac":
-        # Discrete SAC: off-policy, auto-tuned entropy target 
-        # so the policy doesn't collapse to deterministic tie-breaking. 
+        # Discrete SAC: off-policy, auto-tuned entropy target
+        # so the policy doesn't collapse to deterministic tie-breaking.
         config = SACConfig().training(
             replay_buffer_config={
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
@@ -53,10 +53,6 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
             train_batch_size_per_learner=2048,
             num_steps_sampled_before_learning_starts=300,
             initial_alpha=0.2,
-        ).env_runners(
-            # Turn-based multi-agent: per-agent episode times don't work with
-            # env-step chunk boundaries, so we are using whole episodes only.
-            batch_mode="complete_episodes",
         )
 
     if config is None:
@@ -68,7 +64,12 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
 def add_env_config(config: AlgorithmConfig) -> AlgorithmConfig:
     config.environment("env")
     # needed for turn-based env
-    config.env_runners(batch_mode="complete_episodes")
+    # num env runner is for cpu parallelism 
+    config.env_runners(
+        batch_mode="complete_episodes",
+        num_env_runners=6,
+        num_cpus_per_env_runner=1,
+    )
     return config
 
 
