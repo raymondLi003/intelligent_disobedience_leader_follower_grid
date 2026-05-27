@@ -66,14 +66,18 @@ def main():
 
     pairings = []
 
-    # get all experiment pairings except the llm ones
-    for ac in AGENT_CONFIGS:
-        exp_name = experiment_name(ac)
-        
-        shortcut_name = f"{ac.algorithm_name}_{ac.proposer_policy}_x_{ac.validator_policy}"
-        p_factory = load_checkpoint_factory(exp_name, ac.proposer_policy)
-        v_factory = load_checkpoint_factory(exp_name, ac.validator_policy)
-        pairings.append((shortcut_name, p_factory, v_factory))
+    # Get all 12 experiment pairings automatically across algos
+    for algo in ["dqn", "ppo", "sac"]:
+        for ac in AGENT_CONFIGS:
+            # override the original agent config for eval
+            from dataclasses import replace
+            ac_algo = replace(ac, algorithm_name=algo)
+            
+            exp_name = experiment_name(ac_algo)
+            shortcut_name = f"{ac_algo.algorithm_name}_{ac_algo.proposer_policy}_x_{ac_algo.validator_policy}"
+            p_factory = load_checkpoint_factory(exp_name, ac_algo.proposer_policy)
+            v_factory = load_checkpoint_factory(exp_name, ac_algo.validator_policy)
+            pairings.append((shortcut_name, p_factory, v_factory))
 
     # get the llm validator
     llm_validator_factory = lambda env: build_inference_module(env, "validator", LLMValidatorNoStrat)
