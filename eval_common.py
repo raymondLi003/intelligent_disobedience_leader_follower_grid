@@ -162,6 +162,16 @@ def run_pairing(
     final_rewards: list[float] = []
     validator_rewards: list[float] = []
 
+    def get_action(module: RLModule, agent_id: str, obs_dict: dict, stochastic: bool) -> int:
+        batch = {SampleBatch.OBS: obs_dict[agent_id]}
+        if stochastic:
+            if hasattr(module, "_forward_exploration") and "DefaultDQNTorchRLModule" in type(module).__name__:
+                 batch["t"] = torch.tensor(0) 
+            out = module.forward_exploration(batch)
+        else:
+            out = module.forward_inference(batch)
+        return _extract_action(module, out, stochastic=stochastic)
+
     for variation in tqdm.tqdm(variations, desc=name):
         if not variation:
             obs, _ = env.reset()
@@ -179,11 +189,9 @@ def run_pairing(
                 # Sample from the proposer's action distribution instead of taking argmax
                 # Ties and near-ties break randomly
                 # so the agent doesn't get locked into spinning in place on ambiguous states
-                out = proposer_module.forward_exploration({SampleBatch.OBS: obs["proposer"]})
-                actions["proposer"] = _extract_action(proposer_module, out, stochastic=True)
+                actions["proposer"] = get_action(proposer_module, "proposer", obs, stochastic=True)
             elif "validator" in obs:
-                out = validator_module.forward_inference({SampleBatch.OBS: obs["validator"]})
-                actions["validator"] = _extract_action(validator_module, out)
+                actions["validator"] = get_action(validator_module, "validator", obs, stochastic=False)
             else:
                 raise RuntimeError(f"No actionable agent in obs: {list(obs.keys())}")
 
