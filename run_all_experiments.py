@@ -126,6 +126,13 @@ def main():
         default=TRAINING_ITERATIONS,
         help=f"training iterations per experiment (default {TRAINING_ITERATIONS})",
     )
+    parser.add_argument(
+        "--only",
+        type=str,
+        default=None,
+        help="comma-separated substrings; only run experiments whose name "
+             "contains ANY of them (e.g. 'dqn_learned_proposer')",
+    )
     args = parser.parse_args()
 
     ray.init(ignore_reinit_error=True)
@@ -139,6 +146,20 @@ def main():
         for algo in ALGORITHMS
         for (prop, val) in PAIRINGS
     ]
+
+    if args.only:
+        needles = [s.strip() for s in args.only.split(",") if s.strip()]
+        agent_configs = [
+            ac for ac in agent_configs
+            if any(n in experiment_name(ac) for n in needles)
+        ]
+        print(f"--only matched {len(agent_configs)} experiment(s):")
+        for ac in agent_configs:
+            print(f"  - {experiment_name(ac)}")
+        if not agent_configs:
+            print("Nothing to run. Exiting.")
+            ray.shutdown()
+            return
 
     summary = []
     for i, agent_config in enumerate(agent_configs, start=1):
@@ -156,14 +177,29 @@ def main():
 
     out = LOG_DIR / "tune" / "all_experiments_summary.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(summary, indent=2))
+
+    # Merge with any existing summary so re-runs with --only don't clobber
+    # previously-successful entries. Newly-run experiments overwrite their
+    # matching entry by name; everything else is preserved.
+    merged_by_name = {}
+    if out.exists():
+        try:
+            for entry in json.loads(out.read_text()):
+                merged_by_name[entry["experiment"]] = entry
+        except (json.JSONDecodeError, KeyError, TypeError):
+            print(f"warning: existing summary at {out} is unreadable; overwriting")
+    for entry in summary:
+        merged_by_name[entry["experiment"]] = entry
+    merged = list(merged_by_name.values())
+
+    out.write_text(json.dumps(merged, indent=2))
 
     print("\n" + "=" * 78)
     print("ALL EXPERIMENTS COMPLETE")
     print("=" * 78)
     print(f"\nFull summary (final params + search space + final metrics) saved to:\n  {out}\n")
-    print("Compact overview:")
-    for entry in summary:
+    print("Compact overview (all experiments, including any previously saved):")
+    for entry in merged:
         m = entry.get("final_metrics") or {}
         # episode_return_mean is nested under env_runners/ in the new RLlib API stack
         env_runners = m.get("env_runners", {}) if isinstance(m, dict) else {}

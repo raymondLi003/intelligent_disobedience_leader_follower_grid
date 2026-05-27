@@ -31,7 +31,9 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
                 "alpha": 0.6,
                 "beta": 0.4,
-            }
+            },
+            train_batch_size_per_learner=2048,
+            num_steps_sampled_before_learning_starts=300,
         )
 
     if algorithm_name == "ppo":
@@ -41,8 +43,6 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
         )
 
     if algorithm_name == "sac":
-        # Discrete SAC: off-policy, auto-tuned entropy target
-        # so the policy doesn't collapse to deterministic tie-breaking.
         config = SACConfig().training(
             replay_buffer_config={
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
