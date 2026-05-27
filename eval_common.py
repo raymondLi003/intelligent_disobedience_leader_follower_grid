@@ -165,9 +165,11 @@ def run_pairing(
     def get_action(module: RLModule, agent_id: str, obs_dict: dict, stochastic: bool) -> int:
         batch = {SampleBatch.OBS: obs_dict[agent_id]}
         if stochastic:
-            if hasattr(module, "_forward_exploration") and "DefaultDQNTorchRLModule" in type(module).__name__:
-                 batch["t"] = torch.tensor(0) 
-            out = module.forward_exploration(batch)
+            if "DefaultDQNTorchRLModule" in type(module).__name__ or "DQN" in type(module).__name__:
+                # dqn requires a timestep passed in there as an argument
+                out = module.forward_exploration(batch, t=0)
+            else:
+                out = module.forward_exploration(batch)
         else:
             out = module.forward_inference(batch)
         return _extract_action(module, out, stochastic=stochastic)
