@@ -29,6 +29,7 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
             replay_buffer_config={
                 "enable_replay_buffer_api": True,
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
+                "capacity": 100_000,
                 "alpha": 0.6,
                 "beta": 0.4,
             },
