@@ -252,7 +252,13 @@ def main():
         print(f"{'=' * 78}\n")
         summary.append(train_one(agent_config, args.iters, args.samples))
 
-    out = LOG_DIR / "tune" / "all_experiments_summary.json"
+    # make sure each run only writes to the experiments it has run
+    # so that it does not mess up the merges
+    if args.only:
+        suffix = "_" + "_".join(s.strip() for s in args.only.split(",") if s.strip())
+    else:
+        suffix = ""
+    out = LOG_DIR / "tune" / f"all_experiments_summary{suffix}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 
     # Merge with any existing summary
