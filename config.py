@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Hashable
 
+from ray import tune
 from ray.rllib.algorithms import AlgorithmConfig, PPOConfig
 from ray.rllib.algorithms.dqn import DQNConfig
 from ray.rllib.algorithms.sac import SACConfig
@@ -60,6 +61,33 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
     return config.framework("torch")
+
+
+def get_search_space(algorithm_name: str) -> dict:
+    """Hyperparameter search space for Ray Tune autotune
+    """
+    if algorithm_name == "dqn":
+        return {
+            "lr": tune.loguniform(1e-5, 1e-3),
+            "gamma": tune.uniform(0.95, 0.999),
+            "target_network_update_freq": tune.choice([200, 500, 1000]),
+            "n_step": tune.choice([1, 3, 5]),
+        }
+    if algorithm_name == "ppo":
+        return {
+            "lr": tune.loguniform(1e-5, 1e-3),
+            "entropy_coeff": tune.uniform(0.0, 0.3),
+            "clip_param": tune.uniform(0.1, 0.4),
+            "num_epochs": tune.choice([10, 20, 30]),
+        }
+    if algorithm_name == "sac":
+        return {
+            "actor_lr": tune.loguniform(1e-5, 1e-3),
+            "critic_lr": tune.loguniform(1e-5, 1e-3),
+            "tau": tune.uniform(0.001, 0.01),
+            "gamma": tune.uniform(0.95, 0.999),
+        }
+    raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
 
 def add_env_config(config: AlgorithmConfig) -> AlgorithmConfig:
