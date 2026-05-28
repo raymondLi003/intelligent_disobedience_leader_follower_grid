@@ -34,14 +34,14 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
                 "alpha": 0.6,
                 "beta": 0.4,
             },
-            train_batch_size_per_learner=2048,
+            train_batch_size_per_learner=1024,
             num_steps_sampled_before_learning_starts=300,
         )
 
     if algorithm_name == "ppo":
         config = PPOConfig().training(
             entropy_coeff=0.2,
-            train_batch_size=2048,
+            train_batch_size=1024,
         )
 
     if algorithm_name == "sac":
@@ -52,7 +52,7 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
                 "alpha": 0.6,
                 "beta": 0.4,
             },
-            train_batch_size_per_learner=2048,
+            train_batch_size_per_learner=1024,
             num_steps_sampled_before_learning_starts=300,
             initial_alpha=0.2,
         )
