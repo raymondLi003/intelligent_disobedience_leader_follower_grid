@@ -18,6 +18,7 @@ logs/tune/all_experiments_summary.json.
 Usage:
     python run_all_experiments.py                # full run 
     python run_all_experiments.py --iters 200    # if want to customize iterations
+    python run_all_experiments.py --samples 16    # activate autotune and run 16 samples
 """
 
 import argparse
@@ -147,7 +148,7 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
             stop={"training_iteration": iters},
             checkpoint_config=tune.CheckpointConfig(
                 checkpoint_at_end=True,
-                checkpoint_frequency=10,
+                checkpoint_frequency=50,
             ),
             storage_path=LOG_DIR / "tune",
             name=name,

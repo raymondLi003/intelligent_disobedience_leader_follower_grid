@@ -26,7 +26,7 @@ def run_experiments(agent_config: AgentConfig):
             stop={"training_iteration": TRAINING_ITERATIONS},
             checkpoint_config=tune.CheckpointConfig(
                 checkpoint_at_end=True,
-                checkpoint_frequency=10,
+                checkpoint_frequency=50,
             ),
             storage_path=LOG_DIR / "tune",
             name=experiment_name,
