@@ -71,7 +71,14 @@ def get_search_space(algorithm_name: str) -> dict:
             "lr": tune.loguniform(1e-5, 1e-3),
             "gamma": tune.uniform(0.95, 0.999),
             "target_network_update_freq": tune.choice([200, 500, 1000]),
-            "n_step": tune.choice([1, 3, 5]),
+            # multi-step
+            "n_step": tune.choice([1, 3, 5, 7]),
+            # epsilon-greedy schedule 
+            "epsilon": tune.choice([
+                [[0, 1.0], [50_000, 0.05]],
+                [[0, 1.0], [150_000, 0.05]],
+                [[0, 1.0], [400_000, 0.10]],
+            ]),
         }
     if algorithm_name == "ppo":
         return {
@@ -86,6 +93,10 @@ def get_search_space(algorithm_name: str) -> dict:
             "critic_lr": tune.loguniform(1e-5, 1e-3),
             "tau": tune.uniform(0.001, 0.01),
             "gamma": tune.uniform(0.95, 0.999),
+            # entropy temperature
+            "initial_alpha": tune.uniform(0.2, 1.0),
+            # multi-step
+            "n_step": tune.choice([1, 3, 5]),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 

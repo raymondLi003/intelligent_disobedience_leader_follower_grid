@@ -30,7 +30,7 @@ _REPO_ROOT = Path(__file__).resolve().parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from env import GridWorldEnv  
+from env import GridWorldEnv, ValidatorAction
 from rl_modules.always_approve_validator import AlwaysApproveValidatorRLM  
 from rl_modules.perfect_proposer import PerfectProposerRLM  
 from rl_modules.perfect_validator import PerfectValidatorRLM  
@@ -161,6 +161,7 @@ def run_pairing(
 
     final_rewards: list[float] = []
     validator_rewards: list[float] = []
+    validator_actions: list[int] = []
 
     def get_action(module: RLModule, agent_id: str, obs_dict: dict, stochastic: bool) -> int:
         batch = {SampleBatch.OBS: obs_dict[agent_id]}
@@ -200,6 +201,8 @@ def run_pairing(
             obs, rewards, terminated, truncated, _ = env.step(actions)
             if "validator" in rewards:
                 validator_rewards.append(rewards["validator"])
+                # record the validator's veto/approve so we can count true disobediences
+                validator_actions.append(actions.get("validator"))
             obs = tree.map_structure(lambda x: torch.tensor(np.expand_dims(x, axis=0)), obs)
             if truncated["__all__"]:
                 break
@@ -211,6 +214,11 @@ def run_pairing(
 
     proposer_arr = np.array(final_rewards)
     val_arr = np.array(validator_rewards)
+    act_arr = np.array(validator_actions)
+    disobeyed_mask = act_arr == ValidatorAction.disobey.value if len(act_arr) else np.array([], dtype=bool)
+    total_disobey = int(np.sum(disobeyed_mask))
+    good_disobey = int(np.sum(disobeyed_mask & (val_arr > 0.0))) if total_disobey else 0
+    bad_disobey = int(np.sum(disobeyed_mask & (val_arr < 0.0))) if total_disobey else 0
 
     result = {
         "name": name,
@@ -223,6 +231,12 @@ def run_pairing(
         "good_disobey_pct": float(np.mean(val_arr > 0.0) * 100) if len(val_arr) else 0.0,
         "bad_disobey_pct": float(np.mean(val_arr < 0.0) * 100) if len(val_arr) else 0.0,
         "n_validator_decisions": int(len(val_arr)),
+        # disobedience counts + good/bad as a share of total disobediences
+        "total_disobey": total_disobey,
+        "good_disobey": good_disobey,
+        "bad_disobey": bad_disobey,
+        "good_disobey_rel_pct": (good_disobey / total_disobey * 100) if total_disobey else 0.0,
+        "bad_disobey_rel_pct": (bad_disobey / total_disobey * 100) if total_disobey else 0.0,
     }
 
     if hasattr(validator_module, "_call_count"):
@@ -249,9 +263,13 @@ def format_table(results: list[dict]) -> str:
         ("goal/N",     lambda r: f"{r['goal_wins']}/{r['n_configs']}"),
         ("val_reward", lambda r: f"{r['validator_mean_reward']:+.4f}"),
         ("wanted %",   lambda r: f"{r['wanted_pct']:6.2f}"),
-        ("good_dis %", lambda r: f"{r['good_disobey_pct']:6.2f}"),
-        ("bad_dis %",  lambda r: f"{r['bad_disobey_pct']:6.2f}"),
+        # "/dec" = share of all validator decision. "/dis" = share of disobediences only
+        ("good/dec %", lambda r: f"{r['good_disobey_pct']:6.2f}"),
+        ("bad/dec %",  lambda r: f"{r['bad_disobey_pct']:6.2f}"),
+        ("good/dis %", lambda r: f"{r.get('good_disobey_rel_pct', 0.0):6.2f}"),
+        ("bad/dis %",  lambda r: f"{r.get('bad_disobey_rel_pct', 0.0):6.2f}"),
         ("decisions",  lambda r: str(r["n_validator_decisions"])),
+        ("tot_dis",    lambda r: str(r.get("total_disobey", 0))),
     ]
     headers = [h for h, _ in cols]
     rows = [[fn(r) for _, fn in cols] for r in results]

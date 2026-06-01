@@ -113,15 +113,14 @@ def main():
             print(f"Validator final rewards mean: {res['validator_mean_reward']}")
             print(f"Validator wanted behaviour: {res['wanted_pct']:.2f}%")
             
-            all_disobey_pct = res['good_disobey_pct'] + res['bad_disobey_pct']
-            print(f"Validator all disobedience: {all_disobey_pct:.2f}%")
+            total_disobey = res['total_disobey']
+            print(f"Validator total disobediences: {total_disobey} "
+                  f"out of {res['n_validator_decisions']} decisions")
             print("Of these,")
-            if all_disobey_pct > 0:
-                print(f"Validator good disobedience: {(res['good_disobey_pct'] / all_disobey_pct) * 100:.2f}% (relative)")
-                print(f"Validator bad disobedience: {(res['bad_disobey_pct'] / all_disobey_pct) * 100:.2f}% (relative)")
-            else:
-                print("Validator good disobedience: 0.00% (relative)")
-                print("Validator bad disobedience: 0.00% (relative)")
+            print(f"Validator good disobedience: {res['good_disobey']} "
+                  f"({res['good_disobey_rel_pct']:.2f}% of disobediences)")
+            print(f"Validator bad disobedience: {res['bad_disobey']} "
+                  f"({res['bad_disobey_rel_pct']:.2f}% of disobediences)")
 
             results.append(res)
         except FileNotFoundError as e:

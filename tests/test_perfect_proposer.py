@@ -13,8 +13,9 @@ def _bare_proposer():
     p = PerfectProposerRLM.__new__(PerfectProposerRLM)
     p._pos = None
     p._dir = None
-    p._known_lava = set()
+    p._known_lava = {}          # cell -> step flagged
     p._last_action = None
+    p._step = 0
     p._rng = np.random.default_rng(0)
     return p
 
@@ -125,11 +126,11 @@ class TestTeleportAndLavaMemory:
         p._get_action(torch.tensor(_view(size, *a)), _OBEY)
         assert p._pos == a[0]
 
-        p._known_lava = {(2, 2)}
+        p._known_lava = {(2, 2): 0}
         p._last_action = None  # isolate from feedback
         p._get_action(torch.tensor(_view(size, *b)), _OBEY)
         assert p._pos == b[0]
-        assert p._known_lava == set()
+        assert p._known_lava == {}
 
     def test_disobeyed_forward_marks_lava(self):
         p = _bare_proposer()
@@ -143,7 +144,23 @@ class TestTeleportAndLavaMemory:
         p = _bare_proposer()
         p._pos, p._dir = (1, 1), 1
         p._last_action = ProposerAction.forward.value
-        p._known_lava = {(1, 2)}
+        p._known_lava = {(1, 2): 0}
         p._apply_feedback(disobeyed=False, size=5)
         assert (1, 2) not in p._known_lava
         assert p._pos == (1, 2)
+
+
+class TestLavaDecay:
+    def test_decay_relaxes_oldest_flag_first(self):
+        # On a 3x3, (1,1)'s only neighbors are (1,2) and (2,1). 
+        # we flag both walls off the goal. The older flag should be decayed first to open that route.
+        p = _bare_proposer()
+        p._pos = (1, 1)
+        p._known_lava = {(1, 2): 5, (2, 1): 1}  # (2,1) is older
+        nxt = p._path_with_decayed_lava((1, 1), (3, 3), size=3)
+        assert nxt == (2, 1)
+
+    def test_decay_returns_none_when_nothing_to_relax(self):
+        p = _bare_proposer()
+        p._known_lava = {}
+        assert p._path_with_decayed_lava((1, 1), (3, 3), size=3) is None
