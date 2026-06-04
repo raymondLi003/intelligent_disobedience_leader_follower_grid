@@ -104,6 +104,17 @@ def metric_for(agent_config: AgentConfig) -> str:
     return "env_runners/episode_return_mean"
 
 
+def scheduler_for(algorithm_name: str, iters: int) -> ASHAScheduler:
+    """
+        change the early stopping to 50 iterations as start
+    """
+    return ASHAScheduler(
+        max_t=iters,
+        grace_period=min(50, iters),
+        reduction_factor=4,
+    )
+
+
 def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
     config = create_rllib_config(agent_config)
     config.callbacks([ActionLoggerCallback])
@@ -122,12 +133,7 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
             num_samples=samples,
             metric=metric_for(agent_config),
             mode="max",
-            # give it a scheduler to reduce training time
-            scheduler=ASHAScheduler(
-                max_t=iters,
-                grace_period=min(100, iters),
-                reduction_factor=3,
-            ),
+            scheduler=scheduler_for(agent_config.algorithm_name, iters),
         )
         # Custom reporter to report only the necessary params
         progress_reporter = CLIReporter(
