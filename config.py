@@ -31,16 +31,16 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
                 "enable_replay_buffer_api": True,
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
                 "capacity": 100_000,
-                "alpha": 0.6,
+                "alpha": 0.8,
                 "beta": 0.4,
             },
-            train_batch_size_per_learner=1024,
+            train_batch_size_per_learner=2048,
             num_steps_sampled_before_learning_starts=300,
         )
 
     if algorithm_name == "ppo":
         config = PPOConfig().training(
-            entropy_coeff=0.2,
+            entropy_coeff=0.01,
             train_batch_size=1024,
         )
 
@@ -49,12 +49,14 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
             replay_buffer_config={
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
                 "capacity": 100_000,
-                "alpha": 0.6,
+                "alpha": 0.8,
                 "beta": 0.4,
             },
-            train_batch_size_per_learner=1024,
+            train_batch_size_per_learner=2048,
             num_steps_sampled_before_learning_starts=300,
-            initial_alpha=0.2,
+            # sharp starting temperature; the LASTING sharpness is set by target_entropy
+            # in the search space (default "auto" ~= near-max entropy keeps it too random).
+            initial_alpha=0.1,
         )
 
     if config is None:
@@ -63,17 +65,20 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
     return config.framework("torch")
 
 
-def get_search_space(algorithm_name: str) -> dict:
-    """Hyperparameter search space for Ray Tune autotune
+def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dict:
+    """Hyperparameter search space for Ray Tune autotune.
+
+    `learns_validator` sets n_step by reward type: short for the validator
+    (immediate +/-1 per veto), longer for the proposer (sparse terminal goal reward).
     """
+    n_step_choices = [1, 3] if learns_validator else [3, 5]
     if algorithm_name == "dqn":
         return {
-            "lr": tune.loguniform(1e-5, 1e-3),
+            "lr": tune.loguniform(1e-5, 3e-4),
             "gamma": tune.uniform(0.95, 0.999),
             "target_network_update_freq": tune.choice([200, 500, 1000]),
-            # multi-step
-            "n_step": tune.choice([1, 3, 5, 7]),
-            # epsilon-greedy schedule 
+            "n_step": tune.choice(n_step_choices),
+            # epsilon-greedy schedule
             "epsilon": tune.choice([
                 [[0, 1.0], [50_000, 0.05]],
                 [[0, 1.0], [150_000, 0.05]],
@@ -83,7 +88,7 @@ def get_search_space(algorithm_name: str) -> dict:
     if algorithm_name == "ppo":
         return {
             "lr": tune.loguniform(1e-5, 1e-3),
-            "entropy_coeff": tune.uniform(0.0, 0.3),
+            "entropy_coeff": tune.uniform(0.0, 0.05),
             "clip_param": tune.uniform(0.1, 0.4),
             "num_epochs": tune.choice([10, 20, 30]),
         }
@@ -93,10 +98,11 @@ def get_search_space(algorithm_name: str) -> dict:
             "critic_lr": tune.loguniform(1e-5, 1e-3),
             "tau": tune.uniform(0.001, 0.01),
             "gamma": tune.uniform(0.95, 0.999),
-            # entropy temperature
-            "initial_alpha": tune.uniform(0.2, 1.0),
-            # multi-step
-            "n_step": tune.choice([1, 3, 5]),
+            # The REAL entropy lever: target_entropy="auto" targets ~0.98*log(A)
+            # (near-max), which keeps the policy very stochastic -> weak greedy
+            # action. Search well below that so the deterministic policy sharpens.
+            "target_entropy": tune.uniform(0.2, 0.6),
+            "n_step": tune.choice(n_step_choices),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 

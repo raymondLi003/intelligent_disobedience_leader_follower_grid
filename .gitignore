@@ -223,3 +223,4 @@ checkpoints/tune/
 checkpoints/
 *.zip
 eval_results/
+.DS_Store

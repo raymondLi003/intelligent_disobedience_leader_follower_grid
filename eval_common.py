@@ -165,15 +165,14 @@ def run_pairing(
 
     def get_action(module: RLModule, agent_id: str, obs_dict: dict, stochastic: bool) -> int:
         batch = {SampleBatch.OBS: obs_dict[agent_id]}
-        if stochastic:
-            if "DefaultDQNTorchRLModule" in type(module).__name__ or "DQN" in type(module).__name__:
-                # dqn requires a timestep passed in there as an argument
-                out = module.forward_exploration(batch, t=0)
-            else:
-                out = module.forward_exploration(batch)
-        else:
-            out = module.forward_inference(batch)
-        return _extract_action(module, out, stochastic=stochastic)
+        is_dqn = "DQN" in type(module).__name__ or "DefaultDQNTorchRLModule" in type(module).__name__
+        # DQN is deterministic
+        if stochastic and not is_dqn:
+            # PPO and SAC are stochastic
+            out = module.forward_exploration(batch)
+            return _extract_action(module, out, stochastic=True)
+        out = module.forward_inference(batch)
+        return _extract_action(module, out, stochastic=False)
 
     for variation in tqdm.tqdm(variations, desc=name):
         if not variation:
@@ -189,9 +188,6 @@ def run_pairing(
         while not terminated["__all__"]:
             actions: dict = {}
             if "proposer" in obs:
-                # Sample from the proposer's action distribution instead of taking argmax
-                # Ties and near-ties break randomly
-                # so the agent doesn't get locked into spinning in place on ambiguous states
                 actions["proposer"] = get_action(proposer_module, "proposer", obs, stochastic=True)
             elif "validator" in obs:
                 actions["validator"] = get_action(validator_module, "validator", obs, stochastic=False)

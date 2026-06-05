@@ -125,8 +125,9 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
     tune_config = None
     progress_reporter = None
     if samples > 1:
-        # activate autotune
-        search_space = get_search_space(agent_config.algorithm_name)
+        # activate autotune and include which policy is getting trained
+        learns_validator = agent_config.validator_policy == ValidatorPolicies.LEARNED
+        search_space = get_search_space(agent_config.algorithm_name, learns_validator=learns_validator)
         for key, sampler in search_space.items():
             param_space[key] = sampler
         tune_config = tune.TuneConfig(
