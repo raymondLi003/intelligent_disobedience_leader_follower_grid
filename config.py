@@ -54,8 +54,7 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
             },
             train_batch_size_per_learner=2048,
             num_steps_sampled_before_learning_starts=300,
-            # sharp starting temperature; the LASTING sharpness is set by target_entropy
-            # in the search space (default "auto" ~= near-max entropy keeps it too random).
+
             initial_alpha=0.1,
         )
 
@@ -68,8 +67,12 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
 def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dict:
     """Hyperparameter search space for Ray Tune autotune.
 
-    `learns_validator` sets n_step by reward type: short for the validator
-    (immediate +/-1 per veto), longer for the proposer (sparse terminal goal reward).
+    `learns_validator` picks the right multi-step horizon for whichever side is
+    being trained:
+        validator: reward is immediate (rewards per veto decision), so shorter n_step,
+        
+        proposer: reward is sparse and terminal (rewards only at the goal) so longer
+        n_step gets that signal back faster.
     """
     n_step_choices = [1, 3] if learns_validator else [3, 5]
     if algorithm_name == "dqn":
