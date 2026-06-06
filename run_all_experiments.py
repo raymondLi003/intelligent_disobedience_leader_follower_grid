@@ -253,6 +253,8 @@ def main():
             single_agent=False,
             max_steps=MAX_ENV_STEPS,
             proposer_sees_lava=ac.proposer_sees_lava,
+            # only for training, we do random spawn
+            randomize_spawn=True,
         ))
         print(f"\n{'=' * 78}")
         print(f">>> [{i}/{len(agent_configs)}] Training: {experiment_name(agent_config)}")
