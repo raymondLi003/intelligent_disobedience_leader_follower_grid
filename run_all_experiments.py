@@ -106,12 +106,13 @@ def metric_for(agent_config: AgentConfig) -> str:
 
 def scheduler_for(algorithm_name: str, iters: int) -> ASHAScheduler:
     """
-        change the early stopping to 50 iterations as start
+    100 iterations early stopping 
+    100/200/400/800
     """
     return ASHAScheduler(
         max_t=iters,
-        grace_period=min(50, iters),
-        reduction_factor=4,
+        grace_period=min(100, iters),
+        reduction_factor=2,
     )
 
 
