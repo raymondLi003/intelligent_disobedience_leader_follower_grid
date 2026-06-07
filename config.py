@@ -54,8 +54,7 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
             },
             train_batch_size_per_learner=2048,
             num_steps_sampled_before_learning_starts=300,
-
-            initial_alpha=0.1,
+            initial_alpha=0.2,
         )
 
     if config is None:
@@ -66,15 +65,8 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
 
 def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dict:
     """Hyperparameter search space for Ray Tune autotune.
-
-    `learns_validator` picks the right multi-step horizon for whichever side is
-    being trained:
-        validator: reward is immediate (rewards per veto decision), so shorter n_step,
-        
-        proposer: reward is sparse and terminal (rewards only at the goal) so longer
-        n_step gets that signal back faster.
     """
-    n_step_choices = [1, 3] if learns_validator else [3, 5]
+    n_step_choices = [1, 3] if learns_validator else [1, 3, 5]
     if algorithm_name == "dqn":
         return {
             "lr": tune.loguniform(1e-5, 3e-4),
@@ -101,10 +93,6 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             "critic_lr": tune.loguniform(1e-5, 1e-3),
             "tau": tune.uniform(0.001, 0.01),
             "gamma": tune.uniform(0.95, 0.999),
-            # The REAL entropy lever: target_entropy="auto" targets ~0.98*log(A)
-            # (near-max), which keeps the policy very stochastic -> weak greedy
-            # action. Search well below that so the deterministic policy sharpens.
-            "target_entropy": tune.uniform(0.2, 0.6),
             "n_step": tune.choice(n_step_choices),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")

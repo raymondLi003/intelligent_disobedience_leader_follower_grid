@@ -30,6 +30,23 @@ from llm_validator_no_strat import LLMValidatorNoStrat
 from ray.rllib.examples.rl_modules.classes.random_rlm import RandomRLModule
 from utils import AGENT_CONFIGS, LOG_DIR, ProposerPolicies, ValidatorPolicies, GRID_SIZE, NUM_LAVA_TILES
 
+
+
+LLM_MODELS = [
+    ("claude_haiku", "us.anthropic.claude-3-haiku-20240307-v1:0"),
+    ("gpt_4o_mini", "4o-mini"),
+    ("gemini_2_5_flash", "gemini-2.5-flash"),
+]
+
+
+def _make_llm_validator_class(model_name: str) -> type:
+    """Build a subclass of LLMValidatorNoStrat pinned to a specific LLM model."""
+    return type(
+        f"LLMValidator_{model_name}",
+        (LLMValidatorNoStrat,),
+        {"MODEL_NAME": model_name},
+    )
+
 def experiment_name(agent_config) -> str:
     return (
         f"{agent_config.algorithm_name}"
@@ -79,9 +96,13 @@ def main():
             v_factory = load_checkpoint_factory(exp_name, ac_algo.validator_policy)
             pairings.append((shortcut_name, p_factory, v_factory))
 
-    # get the llm validator
-    llm_validator_factory = lambda env: build_inference_module(env, "validator", LLMValidatorNoStrat)
-    pairings.append(("perfect_x_llm", perfect_proposer_factory, llm_validator_factory))
+    # LLM validator paired with the perfect (BFS) proposer, one entry per model.
+    # Uses subclasses so each model writes its own log file and the eval table
+    for display_name, model_name in LLM_MODELS:
+        validator_class = _make_llm_validator_class(model_name)
+        # bind both vars as defaults so the lambda closure captures the right one
+        llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
+        pairings.append((f"perfect_x_llm_{display_name}", perfect_proposer_factory, llm_factory))
 
     results = []
     
@@ -89,8 +110,13 @@ def main():
     for name, p_factory, v_factory in pairings:
         print(f"\n>>> Running evaluation for: {name}")
         
-        # Decide out folder logic 
-        folder = "videos/no_strat" if "llm" in name else f"videos/empirical/{name.split('_')[0]}"
+        # Decide out folder logic. LLM runs get their own per-model dir so
+        # videos from different models don't overwrite each other
+        if name.startswith("perfect_x_llm_"):
+            model_slug = name[len("perfect_x_llm_"):]
+            folder = f"videos/llm/{model_slug}"
+        else:
+            folder = f"videos/empirical/{name.split('_')[0]}"
         
         try:
             res = run_pairing(

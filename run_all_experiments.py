@@ -168,9 +168,29 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
 
     results = tuner.fit()
     # In autotune mode, pick the best trial by the per-policy metric we set
+    # and it only picks the ones with a full run
     # In single-trial mode, this just returns the only trial.
     if samples > 1:
-        best = results.get_best_result(metric=metric_for(agent_config), mode="max")
+        metric = metric_for(agent_config)
+
+        def _metric_val(r):
+            md = r.metrics or {}
+            if metric in md:                      
+                v = md[metric]
+            else:                                 
+                v = md
+                for part in metric.split("/"):
+                    v = v.get(part) if isinstance(v, dict) else None
+            return v if isinstance(v, (int, float)) else float("-inf")
+
+        def _iters(r):
+            return (r.metrics or {}).get("training_iteration", 0)
+
+        full_length = [r for r in results if _iters(r) >= iters]
+        if not full_length:
+            print(f"  warning: no trial reached {iters} iters; falling back to all trials")
+            full_length = list(results)
+        best = max(full_length, key=_metric_val)
     else:
         best = results.get_best_result()
 
@@ -253,8 +273,14 @@ def main():
             single_agent=False,
             max_steps=MAX_ENV_STEPS,
             proposer_sees_lava=ac.proposer_sees_lava,
-            # only for training, we do random spawn
-            randomize_spawn=True,
+            # Exploring starts are PER-ROLE (eval always uses the fixed start):
+            #   validator-learning -> ON: the veto decision is local/start-independent,
+            #     and random starts expose more forward-into-lava cases (denser signal),
+            #     with no train/eval mismatch.
+            #   proposer-learning  -> OFF: the proposer must specialize to the FIXED
+            #     eval start; random-start training spreads a weak learner's capacity and
+            #     tanks fixed-start eval (dropped the SAC proposer from ~89% to ~37%).
+            randomize_spawn=(ac.validator_policy == ValidatorPolicies.LEARNED),
         ))
         print(f"\n{'=' * 78}")
         print(f">>> [{i}/{len(agent_configs)}] Training: {experiment_name(agent_config)}")
