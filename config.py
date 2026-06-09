@@ -23,10 +23,15 @@ from utils import (
     DEFAULT_SINGLE_AGENT_CONV_MODEL_CONFIG, CATALOG_CLASS, )
 
 
-def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
+def create_algorithm_config(algorithm_name: str, learns_validator: bool = False) -> AlgorithmConfig:
+
     config = None
     if algorithm_name == "dqn":
-        # Aggressive exploration with epsilon high for a long period of time
+
+        if learns_validator:
+            epsilon = [(0, 1.0), (50_000, 0.02)]    
+        else:
+            epsilon = [(0, 1.0), (300_000, 0.15)]   
         config = DQNConfig().training(
             replay_buffer_config={
                 "enable_replay_buffer_api": True,
@@ -37,16 +42,21 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
             },
             train_batch_size_per_learner=512,
             num_steps_sampled_before_learning_starts=300,
-            epsilon=[(0, 1.0), (300_000, 0.15)],
+            epsilon=epsilon,
         )
 
     if algorithm_name == "ppo":
-        config = PPOConfig().training(
-            entropy_coeff=[
+
+        if learns_validator:
+            entropy_coeff = 0.01                    
+        else:
+            entropy_coeff = [                       
                 (0, 0.2),
                 (200_000, 0.05),
                 (800_000, 0.005),
-            ],
+            ]
+        config = PPOConfig().training(
+            entropy_coeff=entropy_coeff,
             train_batch_size=512,
         )
 
@@ -74,21 +84,31 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
     """
     n_step_choices = [1, 3] if learns_validator else [1, 3, 5]
     if algorithm_name == "dqn":
+        if learns_validator:
+            epsilon_choices = [
+                [(0, 1.0), (30_000, 0.02)],
+                [(0, 1.0), (50_000, 0.05)],
+                [(0, 1.0), (100_000, 0.05)],
+            ]
+        else:
+            epsilon_choices = [
+                [(0, 1.0), (100_000, 0.10)],
+                [(0, 1.0), (300_000, 0.15)],
+                [(0, 1.0), (500_000, 0.20)],
+            ]
         return {
             "lr": tune.loguniform(1e-5, 3e-4),
             "gamma": tune.uniform(0.95, 0.999),
             "target_network_update_freq": tune.choice([200, 500, 1000]),
             "n_step": tune.choice(n_step_choices),
-            "epsilon": tune.choice([
-                [(0, 1.0), (100_000, 0.10)],
-                [(0, 1.0), (300_000, 0.15)],
-                [(0, 1.0), (500_000, 0.20)],
-            ]),
+            "epsilon": tune.choice(epsilon_choices),
         }
     if algorithm_name == "ppo":
+
+        entropy_coeff = tune.uniform(0.0, 0.02) if learns_validator else tune.uniform(0.05, 0.25)
         return {
             "lr": tune.loguniform(1e-5, 1e-3),
-            "entropy_coeff": tune.uniform(0.05, 0.25),
+            "entropy_coeff": entropy_coeff,
             "clip_param": tune.uniform(0.1, 0.4),
             "num_epochs": tune.choice([10, 20, 30]),
         }
@@ -225,7 +245,8 @@ def add_multi_agent_policies(
 
 
 def create_rllib_config(agent_config: AgentConfig) -> AlgorithmConfig:
-    config = create_algorithm_config(agent_config.algorithm_name)
+    learns_validator = agent_config.validator_policy == ValidatorPolicies.LEARNED
+    config = create_algorithm_config(agent_config.algorithm_name, learns_validator=learns_validator)
     config = add_env_config(config)
     if agent_config.proposer_policy is None and agent_config.validator_policy is None:
         assert agent_config.algorithm_name in SINGLE_AGENT_ALGORITHM_MODULES.keys()
