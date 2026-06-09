@@ -26,6 +26,7 @@ from utils import (
 def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
     config = None
     if algorithm_name == "dqn":
+        # Aggressive exploration with epsilon high for a long period of time
         config = DQNConfig().training(
             replay_buffer_config={
                 "enable_replay_buffer_api": True,
@@ -34,14 +35,19 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
                 "alpha": 0.8,
                 "beta": 0.4,
             },
-            train_batch_size_per_learner=2048,
+            train_batch_size_per_learner=512,
             num_steps_sampled_before_learning_starts=300,
+            epsilon=[(0, 1.0), (300_000, 0.15)],
         )
 
     if algorithm_name == "ppo":
         config = PPOConfig().training(
-            entropy_coeff=0.01,
-            train_batch_size=1024,
+            entropy_coeff=[
+                (0, 0.2),
+                (200_000, 0.05),
+                (800_000, 0.005),
+            ],
+            train_batch_size=512,
         )
 
     if algorithm_name == "sac":
@@ -52,9 +58,9 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
                 "alpha": 0.8,
                 "beta": 0.4,
             },
-            train_batch_size_per_learner=2048,
+            train_batch_size_per_learner=512,
             num_steps_sampled_before_learning_starts=300,
-            initial_alpha=0.2,
+            initial_alpha=0.5,
         )
 
     if config is None:
@@ -73,17 +79,16 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             "gamma": tune.uniform(0.95, 0.999),
             "target_network_update_freq": tune.choice([200, 500, 1000]),
             "n_step": tune.choice(n_step_choices),
-            # epsilon-greedy schedule
             "epsilon": tune.choice([
-                [[0, 1.0], [50_000, 0.05]],
-                [[0, 1.0], [150_000, 0.05]],
-                [[0, 1.0], [400_000, 0.10]],
+                [(0, 1.0), (100_000, 0.10)],
+                [(0, 1.0), (300_000, 0.15)],
+                [(0, 1.0), (500_000, 0.20)],
             ]),
         }
     if algorithm_name == "ppo":
         return {
             "lr": tune.loguniform(1e-5, 1e-3),
-            "entropy_coeff": tune.uniform(0.0, 0.05),
+            "entropy_coeff": tune.uniform(0.05, 0.25),
             "clip_param": tune.uniform(0.1, 0.4),
             "num_epochs": tune.choice([10, 20, 30]),
         }
@@ -94,6 +99,7 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             "tau": tune.uniform(0.001, 0.01),
             "gamma": tune.uniform(0.95, 0.999),
             "n_step": tune.choice(n_step_choices),
+            "initial_alpha": tune.uniform(0.3, 0.8),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 

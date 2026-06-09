@@ -224,3 +224,5 @@ checkpoints/
 *.zip
 eval_results/
 .DS_Store
+backups/
+curves/

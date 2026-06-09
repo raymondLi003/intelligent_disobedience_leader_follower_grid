@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import os
 import random
 import sys
 from collections import deque
@@ -150,7 +151,7 @@ def run_pairing(
         render=True,
         record_render=True,
         # put a reasonable upper bound on steps to prevent infinite loops in case of agent running in circles
-        max_steps=200,
+        max_steps=128,
         single_agent=False,
         num_lava_tiles=NUM_LAVA_TILES,
         proposer_sees_lava=False,
@@ -166,7 +167,12 @@ def run_pairing(
     def get_action(module: RLModule, agent_id: str, obs_dict: dict, stochastic: bool) -> int:
         batch = {SampleBatch.OBS: obs_dict[agent_id]}
         is_dqn = "DQN" in type(module).__name__ or "DefaultDQNTorchRLModule" in type(module).__name__
-        # DQN is deterministic
+        if stochastic and is_dqn:
+            # change the eval to sampling from the q distribution
+            temp = float(os.environ.get("DQN_EVAL_TEMP", "0.3"))
+            q = module.compute_q_values(batch)["qf_preds"]
+            probs = torch.softmax(q / max(temp, 1e-6), dim=-1)
+            return int(torch.distributions.Categorical(probs=probs).sample().item())
         if stochastic and not is_dqn:
             # PPO and SAC are stochastic
             out = module.forward_exploration(batch)
@@ -190,7 +196,7 @@ def run_pairing(
             if "proposer" in obs:
                 actions["proposer"] = get_action(proposer_module, "proposer", obs, stochastic=True)
             elif "validator" in obs:
-                actions["validator"] = get_action(validator_module, "validator", obs, stochastic=False)
+                actions["validator"] = get_action(validator_module, "validator", obs, stochastic=True)
             else:
                 raise RuntimeError(f"No actionable agent in obs: {list(obs.keys())}")
 
@@ -345,11 +351,7 @@ def resolve_variations(args: argparse.Namespace, tag: str) -> list:
 
 
 def set_grid(args: argparse.Namespace) -> tuple[int, int]:
-    """Propagate --grid-size to every module that caches GRID_SIZE/NUM_LAVA_TILES.
-
-    Also returns (size, num_lava) so callers whose own module-level names were
-    bound at import time (e.g. `from utils import GRID_SIZE`) can use the fresh
-    values directly instead of reading their stale local binding.
+    """impose --grid-size to every module that caches GRID_SIZE/NUM_LAVA_TILES
     """
     global GRID_SIZE, NUM_LAVA_TILES
     GRID_SIZE = args.grid_size

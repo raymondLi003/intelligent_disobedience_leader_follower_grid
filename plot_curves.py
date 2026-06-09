@@ -84,7 +84,7 @@ for col, algo in enumerate(ALGOS):
             f1.tight_layout(); f1.savefig(os.path.join(OUT, f"{name}.png"), dpi=120)
             plt.close(f1)
 
-fig.suptitle("Learning curves: per-policy return vs training iteration  (gray = all trials, blue = best)")
+fig.suptitle("learning curves (grey - all trials, blue - the best checkpoint)")
 fig.tight_layout()
 grid_path = os.path.join(OUT, "learning_curves.png")
 fig.savefig(grid_path, dpi=120)
