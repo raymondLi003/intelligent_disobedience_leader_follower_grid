@@ -127,13 +127,13 @@ def always_approve_factory(env: GridWorldEnv) -> RLModule:
     return build_inference_module(env, "validator", AlwaysApproveValidatorRLM)
 
 
-def _extract_action(module: RLModule, out: dict, stochastic: bool = False) -> int:
+def _extract_action(module: RLModule, out: dict) -> int:
+    """
+    do a deterministic eval
+    """
     if SampleBatch.ACTIONS in out:
         return int(out[SampleBatch.ACTIONS].item())
     logits = out[SampleBatch.ACTION_DIST_INPUTS]
-    if stochastic:
-        probs = torch.softmax(logits, dim=-1)
-        return int(torch.distributions.Categorical(probs=probs).sample().item())
     return int(torch.argmax(logits, dim=-1).item())
 
 
@@ -164,21 +164,11 @@ def run_pairing(
     validator_rewards: list[float] = []
     validator_actions: list[int] = []
 
-    def get_action(module: RLModule, agent_id: str, obs_dict: dict, stochastic: bool) -> int:
+    def get_action(module: RLModule, agent_id: str, obs_dict: dict) -> int:
+        # Deterministic eval for every algorithm and role
         batch = {SampleBatch.OBS: obs_dict[agent_id]}
-        is_dqn = "DQN" in type(module).__name__ or "DefaultDQNTorchRLModule" in type(module).__name__
-        if stochastic and is_dqn:
-            # change the eval to sampling from the q distribution
-            temp = float(os.environ.get("DQN_EVAL_TEMP", "0.3"))
-            q = module.compute_q_values(batch)["qf_preds"]
-            probs = torch.softmax(q / max(temp, 1e-6), dim=-1)
-            return int(torch.distributions.Categorical(probs=probs).sample().item())
-        if stochastic and not is_dqn:
-            # PPO and SAC are stochastic
-            out = module.forward_exploration(batch)
-            return _extract_action(module, out, stochastic=True)
         out = module.forward_inference(batch)
-        return _extract_action(module, out, stochastic=False)
+        return _extract_action(module, out)
 
     for variation in tqdm.tqdm(variations, desc=name):
         if not variation:
@@ -194,9 +184,9 @@ def run_pairing(
         while not terminated["__all__"]:
             actions: dict = {}
             if "proposer" in obs:
-                actions["proposer"] = get_action(proposer_module, "proposer", obs, stochastic=True)
+                actions["proposer"] = get_action(proposer_module, "proposer", obs)
             elif "validator" in obs:
-                actions["validator"] = get_action(validator_module, "validator", obs, stochastic=True)
+                actions["validator"] = get_action(validator_module, "validator", obs)
             else:
                 raise RuntimeError(f"No actionable agent in obs: {list(obs.keys())}")
 

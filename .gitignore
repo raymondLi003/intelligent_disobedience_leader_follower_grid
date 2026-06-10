@@ -226,3 +226,4 @@ eval_results/
 .DS_Store
 backups/
 curves/
+plot_curves.py
