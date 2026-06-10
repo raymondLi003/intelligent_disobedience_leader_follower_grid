@@ -104,14 +104,11 @@ def metric_for(agent_config: AgentConfig) -> str:
     return "env_runners/episode_return_mean"
 
 
-def scheduler_for(algorithm_name: str, iters: int) -> ASHAScheduler:
-    """
-    100 iterations early stopping 
-    100/200/400/800
-    """
+def scheduler_for(algorithm_name: str, iters: int, learns_validator: bool = False) -> ASHAScheduler:
+    grace = 200 if learns_validator else 100
     return ASHAScheduler(
         max_t=iters,
-        grace_period=min(100, iters),
+        grace_period=min(grace, iters),
         reduction_factor=2,
     )
 
@@ -135,7 +132,7 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
             num_samples=samples,
             metric=metric_for(agent_config),
             mode="max",
-            scheduler=scheduler_for(agent_config.algorithm_name, iters),
+            scheduler=scheduler_for(agent_config.algorithm_name, iters, learns_validator=learns_validator),
         )
         # Custom reporter to report only the necessary params
         progress_reporter = CLIReporter(
@@ -274,13 +271,6 @@ def main():
             single_agent=False,
             max_steps=MAX_ENV_STEPS,
             proposer_sees_lava=ac.proposer_sees_lava,
-            # Exploring starts are PER-ROLE (eval always uses the fixed start):
-            #   validator-learning -> ON: the veto decision is local/start-independent,
-            #     and random starts expose more forward-into-lava cases (denser signal),
-            #     with no train/eval mismatch.
-            #   proposer-learning  -> OFF: the proposer must specialize to the FIXED
-            #     eval start; random-start training spreads a weak learner's capacity and
-            #     tanks fixed-start eval (dropped the SAC proposer from ~89% to ~37%).
             randomize_spawn=(ac.validator_policy == ValidatorPolicies.LEARNED),
         ))
         print(f"\n{'=' * 78}")
