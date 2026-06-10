@@ -32,8 +32,8 @@ _DIR_OFFSET = {
 }
 
 # Probability of taking an exploratory forward step when BFS finds no lava-free path to the goal
-# Only activated under an imperfect validator 
-_NO_PATH_FORWARD_PROB = 0.1
+# Only activated under an imperfect validator
+_NO_PATH_FORWARD_PROB = 0.4
 
 
 class PerfectProposerRLM(RLModule):
@@ -41,8 +41,11 @@ class PerfectProposerRLM(RLModule):
         super().__init__(*args, **kwargs)
         self._pos: tuple[int, int] | None = None
         self._dir: int | None = None
-        self._known_lava: set[tuple[int, int]] = set()
+        # cell to step dict so that we can timestamp the lava flags
+        self._known_lava: dict[tuple[int, int], int] = {}
         self._last_action: int | None = None
+        # a counter used to timestamp lava flags
+        self._step: int = 0
         # RNG for the exploratory forward step in the no-path case
         self._rng = np.random.default_rng()
 
@@ -149,7 +152,10 @@ class PerfectProposerRLM(RLModule):
             int: The chosen discrete action index based on the ProposerAction enum.
         """
         obs_np = obs.detach().cpu().numpy()
-        size = int(obs_np.shape[0]) 
+        size = int(obs_np.shape[0])
+
+        # Advance the decision clock so lava flags added this step are aged correctly
+        self._step += 1
 
         # Evaluate if the validator blocked the last proposed action
         disobeyed = (torch.argmax(validator_action).item() == ValidatorAction.disobey.value)
@@ -170,7 +176,7 @@ class PerfectProposerRLM(RLModule):
             # If the calculated location implies an unexpected leap (> 1 Manhattan distance), 
             # we likely hit a fresh episode boundary and respawned. Then we clear the lava memory
             if self._pos is not None and self._manhattan(self._pos, loc_pos) > 1:
-                self._known_lava = set()
+                self._known_lava = {}
                 
             self._pos, self._dir = loc_pos, loc_dir
             
@@ -183,21 +189,20 @@ class PerfectProposerRLM(RLModule):
         # Use BFS to find the shortest path to the goal (size, size) that avoids
         # every cell we've recorded as lava through validator rejections.
         goal = (size, size)
-        next_cell = self._bfs_next(self._pos, goal, size, self._known_lava)
+        next_cell = self._bfs_next(self._pos, goal, size, set(self._known_lava))
 
-        if next_cell is None:
-            # No lava-free path found 
-            # This usually means an imperfect validator has falsely flagged lava tiles
-            if self._rng.random() < _NO_PATH_FORWARD_PROB:
-                # occasionally probe forward to break out of deterministic 
-                # loops caused by false lava. The validator acts as the safety net.
-                action = ProposerAction.forward.value
+        if next_cell is None and self._pos != goal:
+            # if BFS to the goal is infeasible, we drop the lava flags one by one
+            next_cell = self._path_with_decayed_lava(self._pos, goal, size)
+
+            if next_cell is None:
+                # if there is still no path, the agent is actually boxed in, 
+                # then the agent invokes a probability to move forward
+                action = (ProposerAction.forward.value
+                          if self._rng.random() < _NO_PATH_FORWARD_PROB
+                          else ProposerAction.turn_right.value)
                 self._last_action = action
                 return action
-                
-            # Otherwise, re-plan ignoring lava, we rely on the validator to block the lavas
-            # This may lead to a "safety trap" if the true path is completely blocked.
-            next_cell = self._bfs_next(self._pos, goal, size, blocked=set())
 
         # Move towards the next cell, or step forward if already at the goal.
         action = (ProposerAction.forward.value if next_cell is None
@@ -205,6 +210,20 @@ class PerfectProposerRLM(RLModule):
 
         self._last_action = action
         return action
+
+    def _path_with_decayed_lava(
+        self, start: tuple[int, int], goal: tuple[int, int], size: int
+    ) -> tuple[int, int] | None:
+        """Drop the oldest lava flags one at a time, retrying BFS until a path to the
+        goal appears, and return that path's next cell"""
+        oldest_first = sorted(self._known_lava, key=self._known_lava.get)
+        blocked = set(self._known_lava)
+        for stale in oldest_first:
+            blocked.discard(stale)
+            nxt = self._bfs_next(start, goal, size, blocked)
+            if nxt is not None:
+                return nxt
+        return None
         
 
     
@@ -228,14 +247,15 @@ class PerfectProposerRLM(RLModule):
             in_grid = 1 <= target[0] <= size and 1 <= target[1] <= size
             
             if disobeyed and in_grid:
-                # The validator blocked the forward movement 
+                # The validator blocked the forward movement
                 # so the proposer assumes the target cell must be dangerous lava.
-                self._known_lava.add(target)
+                # Stamp it with the current step so stale flags can be decayed
+                self._known_lava[target] = self._step
             elif not disobeyed and in_grid:
-                # The validator permitted the forward movement, 
-                # so the target cell is considered safe. 
+                # The validator permitted the forward movement,
+                # so the target cell is considered safe.
                 # If we had previously flagged it as lava, clear it
-                self._known_lava.discard(target)
+                self._known_lava.pop(target, None)
                 self._pos = target
                 
         elif not disobeyed:

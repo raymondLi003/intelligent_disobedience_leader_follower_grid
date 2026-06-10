@@ -22,6 +22,7 @@ from env import ProposerAction, ValidatorAction
 
 from llmproxy import LLMProxy
 
+# Default model, subclass can override it to use different llm models
 MODEL_NAME = "us.anthropic.claude-3-haiku-20240307-v1:0"
 
 
@@ -93,8 +94,12 @@ Cell directly in front of ^: wall
 Answer: 0
 """
 
-_LOG_PATH = _REPO_ROOT / "logs" / "llm_eval_no_strat.jsonl"
-_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+_LOG_DIR = _REPO_ROOT / "logs"
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _slugify(model_name: str) -> str:
+    return "".join(c if c.isalnum() else "_" for c in model_name).strip("_")
 
 def _render_egocentric(env_obs: torch.Tensor) -> str:
     """
@@ -167,17 +172,25 @@ def _parse_response(result_text: str) -> int:
     raise ValueError(f"No 0/1 digit in LLM response: {result_text!r}")
 
 class LLMValidatorNoStrat(RLModule):
-    """Validator policy that uses an LLM to 
-    decide whether to block or allow the leader's proposed action 
-    based on the validator's egocentric view of the grid 
-    and the content of the cell directly in front of the agent."""
-    
+    """Validator policy that uses an LLM to
+    decide whether to block or allow the leader's proposed action
+    based on the validator's egocentric view of the grid
+    and the content of the cell directly in front of the agent.
+
+    Subclass and override MODEL_NAME to use a different LLM (GPT, Gemini, ...).
+    The Tufts LLMProxy routes to whichever backend matches the model string."""
+
+    # Override in subclasses to swap models without touching call sites.
+    MODEL_NAME: str = MODEL_NAME
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._proxy: LLMProxy | None = None
         self._cache: Dict[tuple, int] = {}
         self._call_count = 0
         self._cache_hits = 0
+        # Per-model log file so different LLMs don't overwrite each other.
+        self._log_path = _LOG_DIR / f"llm_eval_no_strat__{_slugify(self.MODEL_NAME)}.jsonl"
         
     def _ensure_proxy(self) -> LLMProxy:
         if self._proxy is None:
@@ -200,11 +213,11 @@ class LLMValidatorNoStrat(RLModule):
         self._call_count += 1
         # LLM call
         response = proxy.generate(
-            model=MODEL_NAME,
+            model=self.MODEL_NAME,
             system=SYSTEM_PROMPT,
             query=query,
             temperature=0.0,
-            session_id=f"llm-validator-{self._call_count}",
+            session_id=f"llm-validator-{_slugify(self.MODEL_NAME)}-{self._call_count}",
         )
         
         if not isinstance(response, dict) or "error" in response:
@@ -221,10 +234,11 @@ class LLMValidatorNoStrat(RLModule):
         # Cache the decision
         self._cache[cache_key] = decision
         
-        # Log the call details for analysis
+        # Log the call details for analysis (per-model log file)
         try:
-            with _LOG_PATH.open("a") as f:
+            with self._log_path.open("a") as f:
                 f.write(json.dumps({
+                    "model": self.MODEL_NAME,
                     "call": self._call_count,
                     "proposer_action": proposer_action,
                     "grid": grid_ascii,

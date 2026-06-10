@@ -1,0 +1,163 @@
+"""Consolidated evaluation script for all IDG experiments.
+
+Evaluates the 12 empirical pairings (DQN, PPO, SAC) along with 
+the LLM-validator
+
+Usage:
+    python run_all_eval.py
+    python run_all_eval.py --max-configs 200
+"""
+
+import argparse
+from pathlib import Path
+
+import ray
+from ray.rllib.core.rl_module import RLModule
+from ray.tune import register_env
+
+from env import GridWorldEnv
+from eval_common import (
+    add_config_sampling_args,
+    always_approve_factory,
+    build_inference_module,
+    perfect_proposer_factory,
+    perfect_validator_factory,
+    print_summary,
+    resolve_variations,
+    run_pairing,
+)
+from llm_validator_no_strat import LLMValidatorNoStrat
+from ray.rllib.examples.rl_modules.classes.random_rlm import RandomRLModule
+from utils import AGENT_CONFIGS, LOG_DIR, ProposerPolicies, ValidatorPolicies, GRID_SIZE, NUM_LAVA_TILES
+
+
+
+LLM_MODELS = [
+    ("claude_haiku", "us.anthropic.claude-3-haiku-20240307-v1:0"),
+    ("gpt_4o_mini", "4o-mini"),
+    ("gemini_2_5_flash", "gemini-2.5-flash"),
+]
+
+
+def _make_llm_validator_class(model_name: str) -> type:
+    """Build a subclass of LLMValidatorNoStrat pinned to a specific LLM model."""
+    return type(
+        f"LLMValidator_{model_name}",
+        (LLMValidatorNoStrat,),
+        {"MODEL_NAME": model_name},
+    )
+
+def experiment_name(agent_config) -> str:
+    return (
+        f"{agent_config.algorithm_name}"
+        f"_{agent_config.proposer_policy}_{agent_config.validator_policy}"
+        f"__proposer_sees_lava_{agent_config.proposer_sees_lava}"
+    )
+
+def load_checkpoint_factory(exp_name: str, policy_id: str):
+    def factory(env):
+        checkpoint_path = LOG_DIR / "tune" / exp_name / "best_checkpoint" / "learner_group" / "learner" / "rl_module" / policy_id
+        if not checkpoint_path.exists():
+            # create inference modules for non-RL modules
+            if policy_id == ProposerPolicies.PERFECT:
+                return perfect_proposer_factory(env)
+            if policy_id == ValidatorPolicies.PERFECT:
+                return perfect_validator_factory(env)
+            if policy_id == ValidatorPolicies.ALWAYS_APPROVE:
+                return always_approve_factory(env)
+            if policy_id == ProposerPolicies.RANDOM:
+                return build_inference_module(env, "proposer", RandomRLModule)
+            raise FileNotFoundError(f"Missing checkpoint: {checkpoint_path}")
+        return RLModule.from_checkpoint(str(checkpoint_path))
+    return factory
+
+def main():
+    parser = argparse.ArgumentParser()
+    add_config_sampling_args(parser)
+    args = parser.parse_args()
+
+    ray.init(ignore_reinit_error=True)
+    register_env("env", lambda _: GridWorldEnv(GRID_SIZE, num_lava_tiles=NUM_LAVA_TILES, single_agent=False))
+
+    variations = resolve_variations(args, tag="run_all_eval")
+
+    pairings = []
+
+    # Get all 12 experiment pairings automatically across algos
+    for algo in ["dqn", "ppo", "sac"]:
+        for ac in AGENT_CONFIGS:
+            # override the original agent config for eval
+            from dataclasses import replace
+            ac_algo = replace(ac, algorithm_name=algo)
+            
+            exp_name = experiment_name(ac_algo)
+            shortcut_name = f"{ac_algo.algorithm_name}_{ac_algo.proposer_policy}_x_{ac_algo.validator_policy}"
+            p_factory = load_checkpoint_factory(exp_name, ac_algo.proposer_policy)
+            v_factory = load_checkpoint_factory(exp_name, ac_algo.validator_policy)
+            pairings.append((shortcut_name, p_factory, v_factory))
+
+    # LLM validator paired with the perfect (BFS) proposer, one entry per model.
+    # Uses subclasses so each model writes its own log file and the eval table
+    for display_name, model_name in LLM_MODELS:
+        validator_class = _make_llm_validator_class(model_name)
+        # bind both vars as defaults so the lambda closure captures the right one
+        llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
+        pairings.append((f"perfect_x_llm_{display_name}", perfect_proposer_factory, llm_factory))
+
+    results = []
+    
+    # Use output folder mapping similar to run_eval_no_llm 
+    for name, p_factory, v_factory in pairings:
+        print(f"\n>>> Running evaluation for: {name}")
+        
+        # Decide out folder logic. LLM runs get their own per-model dir so
+        # videos from different models don't overwrite each other
+        if name.startswith("perfect_x_llm_"):
+            model_slug = name[len("perfect_x_llm_"):]
+            folder = f"videos/llm/{model_slug}"
+        else:
+            folder = f"videos/empirical/{name.split('_')[0]}"
+        
+        try:
+            res = run_pairing(
+                name=name,
+                proposer_factory=p_factory,
+                validator_factory=v_factory,
+                variations=variations,
+                video_dir=folder,
+                save_video=True,
+            )
+            
+            # line by line eval
+            print(f"\nEvaluating on {GRID_SIZE}x{GRID_SIZE} grid with {NUM_LAVA_TILES} lava tiles")
+            print(f"with {name} policies.")
+            print(" Proposer ".center(50, '='))
+            print(f"Reached the goal in {res['goal_wins']} out of {res['n_configs']} "
+                  f"({res['goal_pct']:.2f}%).")
+
+            print(" Validator ".center(50, '='))
+            print(f"Validator final rewards mean: {res['validator_mean_reward']}")
+            print(f"Validator wanted behaviour: {res['wanted_pct']:.2f}%")
+            
+            total_disobey = res['total_disobey']
+            print(f"Validator total disobediences: {total_disobey} "
+                  f"out of {res['n_validator_decisions']} decisions")
+            print("Of these,")
+            print(f"Validator good disobedience: {res['good_disobey']} "
+                  f"({res['good_disobey_rel_pct']:.2f}% of disobediences)")
+            print(f"Validator bad disobedience: {res['bad_disobey']} "
+                  f"({res['bad_disobey_rel_pct']:.2f}% of disobediences)")
+
+            results.append(res)
+        except FileNotFoundError as e:
+            print(f"[Skipping {name}] {e}. (Did you train this model first?)")
+
+    if results:
+        print_summary(results, len(variations))
+    else:
+        print("No evaluations were run.")
+
+    ray.shutdown()
+
+if __name__ == '__main__':
+    main()

@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Hashable
 
+from ray import tune
 from ray.rllib.algorithms import AlgorithmConfig, PPOConfig
 from ray.rllib.algorithms.dqn import DQNConfig
 from ray.rllib.algorithms.sac import SACConfig
@@ -22,41 +23,57 @@ from utils import (
     DEFAULT_SINGLE_AGENT_CONV_MODEL_CONFIG, CATALOG_CLASS, )
 
 
-def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
+def create_algorithm_config(algorithm_name: str, learns_validator: bool = False) -> AlgorithmConfig:
+
     config = None
     if algorithm_name == "dqn":
+        if learns_validator:
+            epsilon = [(0, 1.0), (10_000, 0.05)]
+
+            buffer_capacity = 500_000
+        else:
+            epsilon = [(0, 1.0), (10_000, 0.05)]  
+            buffer_capacity = 100_000
         config = DQNConfig().training(
             replay_buffer_config={
                 "enable_replay_buffer_api": True,
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
-                "alpha": 0.6,
+                "capacity": buffer_capacity,
+                "alpha": 0.8,
                 "beta": 0.4,
-            }
+            },
+            train_batch_size_per_learner=512,
+            num_steps_sampled_before_learning_starts=300,
+            epsilon=epsilon,
         )
 
     if algorithm_name == "ppo":
+
+        if learns_validator:
+            entropy_coeff = 0.01                    
+        else:
+            entropy_coeff = [                       
+                (0, 0.2),
+                (200_000, 0.05),
+                (800_000, 0.005),
+            ]
         config = PPOConfig().training(
-            entropy_coeff=0.2,
-            train_batch_size=2048,
+            entropy_coeff=entropy_coeff,
+            train_batch_size=512,
         )
 
     if algorithm_name == "sac":
-        # Discrete SAC: off-policy, auto-tuned entropy target 
-        # so the policy doesn't collapse to deterministic tie-breaking. 
+        initial_alpha = 0.2 if learns_validator else 0.05
         config = SACConfig().training(
             replay_buffer_config={
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
                 "capacity": 100_000,
-                "alpha": 0.6,
+                "alpha": 0.8,
                 "beta": 0.4,
             },
-            train_batch_size_per_learner=2048,
+            train_batch_size_per_learner=512,
             num_steps_sampled_before_learning_starts=300,
-            initial_alpha=0.2,
-        ).env_runners(
-            # Turn-based multi-agent: per-agent episode times don't work with
-            # env-step chunk boundaries, so we are using whole episodes only.
-            batch_mode="complete_episodes",
+            initial_alpha=initial_alpha,
         )
 
     if config is None:
@@ -65,10 +82,79 @@ def create_algorithm_config(algorithm_name: str) -> AlgorithmConfig:
     return config.framework("torch")
 
 
+def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dict:
+    """Hyperparameter search space for Ray Tune autotune.
+    """
+
+    n_step_choices = [1, 3] if learns_validator else [1]
+    if algorithm_name == "dqn":
+        if learns_validator:
+            epsilon_choices = [
+                [(0, 1.0), (10_000, 0.05)],  
+                [(0, 1.0), (30_000, 0.05)],
+                [(0, 1.0), (50_000, 0.10)],
+            ]
+        else:
+
+            epsilon_choices = [
+                [(0, 1.0), (10_000, 0.05)],
+                [(0, 1.0), (50_000, 0.05)],
+                [(0, 1.0), (100_000, 0.10)],
+            ]
+        return {
+            "lr": tune.loguniform(1e-5, 3e-4),
+            "gamma": tune.uniform(0.95, 0.999),
+            "target_network_update_freq": tune.choice([200, 500, 1000]),
+            "n_step": tune.choice(n_step_choices),
+            "epsilon": tune.choice(epsilon_choices),
+        }
+    if algorithm_name == "ppo":
+        if learns_validator:
+            # Anti-oscillation: both validator runs oscillated +/-20 from
+            # ~iter 150 and never converged; the last winner paired lr=4.5e-4
+            # with num_epochs=30 on batch-512 (30 passes/iter = overshoot).
+            # Cap lr, halve epochs, tighten the trust region.
+            return {
+                "lr": tune.loguniform(1e-5, 2e-4),
+                "entropy_coeff": tune.uniform(0.0, 0.1),
+                "clip_param": tune.uniform(0.1, 0.25),
+                "num_epochs": tune.choice([5, 10]),
+            }
+        return {
+            "lr": tune.loguniform(1e-5, 1e-3),
+            "entropy_coeff": tune.uniform(0.05, 0.25),
+            "clip_param": tune.uniform(0.1, 0.4),
+            "num_epochs": tune.choice([10, 20, 30]),
+        }
+    if algorithm_name == "sac":
+        if learns_validator:
+            initial_alpha = tune.uniform(0.2, 0.8)
+            alpha_lr = tune.loguniform(3e-4, 1e-2)
+        else:
+
+            initial_alpha = tune.uniform(0.01, 0.15)
+            alpha_lr = tune.loguniform(1e-3, 1e-2)
+        return {
+            "actor_lr": tune.loguniform(1e-5, 1e-3),
+            "critic_lr": tune.loguniform(1e-5, 1e-3),
+            "alpha_lr": alpha_lr,
+            "tau": tune.uniform(0.001, 0.01),
+            "gamma": tune.uniform(0.95, 0.999),
+            "n_step": tune.choice(n_step_choices),
+            "initial_alpha": initial_alpha,
+        }
+    raise ValueError(f"Unknown algorithm: {algorithm_name}")
+
+
 def add_env_config(config: AlgorithmConfig) -> AlgorithmConfig:
     config.environment("env")
     # needed for turn-based env
-    config.env_runners(batch_mode="complete_episodes")
+    # num env runner is for cpu parallelism 
+    config.env_runners(
+        batch_mode="complete_episodes",
+        num_env_runners=6,
+        num_cpus_per_env_runner=1,
+    )
     return config
 
 
@@ -181,7 +267,8 @@ def add_multi_agent_policies(
 
 
 def create_rllib_config(agent_config: AgentConfig) -> AlgorithmConfig:
-    config = create_algorithm_config(agent_config.algorithm_name)
+    learns_validator = agent_config.validator_policy == ValidatorPolicies.LEARNED
+    config = create_algorithm_config(agent_config.algorithm_name, learns_validator=learns_validator)
     config = add_env_config(config)
     if agent_config.proposer_policy is None and agent_config.validator_policy is None:
         assert agent_config.algorithm_name in SINGLE_AGENT_ALGORITHM_MODULES.keys()
