@@ -86,39 +86,41 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
     """Hyperparameter search space for Ray Tune autotune.
     """
 
-    n_step_choices = [1, 3] if learns_validator else [1]
+
+    n_step_choices = [1]
     if algorithm_name == "dqn":
         if learns_validator:
+            # increase the exploration
             epsilon_choices = [
-                [(0, 1.0), (10_000, 0.05)],  
-                [(0, 1.0), (30_000, 0.05)],
-                [(0, 1.0), (50_000, 0.10)],
+                [(0, 1.0), (100_000, 0.10)],
+                [(0, 1.0), (200_000, 0.10)],
+                [(0, 1.0), (300_000, 0.15)],
             ]
+            gamma = tune.uniform(0.90, 0.97)
+            lr = tune.loguniform(3e-5, 3e-4)
         else:
-
             epsilon_choices = [
                 [(0, 1.0), (10_000, 0.05)],
-                [(0, 1.0), (50_000, 0.05)],
+                [(0, 1.0), (30_000, 0.05)],
                 [(0, 1.0), (100_000, 0.10)],
             ]
+            gamma = tune.uniform(0.98, 0.995)
+            lr = tune.loguniform(1e-4, 6e-4)
         return {
-            "lr": tune.loguniform(1e-5, 3e-4),
-            "gamma": tune.uniform(0.95, 0.999),
-            "target_network_update_freq": tune.choice([200, 500, 1000]),
+            "lr": lr,
+            "gamma": gamma,
+            "target_network_update_freq": tune.choice([200, 500]),
             "n_step": tune.choice(n_step_choices),
             "epsilon": tune.choice(epsilon_choices),
         }
     if algorithm_name == "ppo":
         if learns_validator:
-            # Anti-oscillation: both validator runs oscillated +/-20 from
-            # ~iter 150 and never converged; the last winner paired lr=4.5e-4
-            # with num_epochs=30 on batch-512 (30 passes/iter = overshoot).
-            # Cap lr, halve epochs, tighten the trust region.
+
             return {
-                "lr": tune.loguniform(1e-5, 2e-4),
-                "entropy_coeff": tune.uniform(0.0, 0.1),
-                "clip_param": tune.uniform(0.1, 0.25),
-                "num_epochs": tune.choice([5, 10]),
+                "lr": tune.loguniform(5e-5, 1e-3),
+                "entropy_coeff": tune.uniform(0.0, 0.03),
+                "clip_param": tune.uniform(0.1, 0.4),
+                "num_epochs": tune.choice([10, 20, 30]),
             }
         return {
             "lr": tune.loguniform(1e-5, 1e-3),
@@ -128,20 +130,25 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
         }
     if algorithm_name == "sac":
         if learns_validator:
-            initial_alpha = tune.uniform(0.2, 0.8)
-            alpha_lr = tune.loguniform(3e-4, 1e-2)
-        else:
 
-            initial_alpha = tune.uniform(0.01, 0.15)
-            alpha_lr = tune.loguniform(1e-3, 1e-2)
+            return {
+                "actor_lr": tune.loguniform(1e-5, 1e-3),
+                "critic_lr": tune.loguniform(1e-5, 1e-3),
+                "alpha_lr": tune.loguniform(3e-4, 1e-2),
+                "tau": tune.uniform(0.001, 0.01),
+                "gamma": tune.uniform(0.95, 0.999),
+                "n_step": tune.choice(n_step_choices),
+                "initial_alpha": tune.uniform(0.2, 0.8),
+            }
         return {
-            "actor_lr": tune.loguniform(1e-5, 1e-3),
-            "critic_lr": tune.loguniform(1e-5, 1e-3),
-            "alpha_lr": alpha_lr,
-            "tau": tune.uniform(0.001, 0.01),
-            "gamma": tune.uniform(0.95, 0.999),
+            "actor_lr": tune.loguniform(2e-5, 3e-4),
+            "critic_lr": tune.loguniform(3e-5, 3e-4),
+            "alpha_lr": tune.loguniform(1e-3, 1e-2),
+            "tau": tune.uniform(0.002, 0.008),
+            "gamma": tune.uniform(0.98, 0.997),
             "n_step": tune.choice(n_step_choices),
-            "initial_alpha": initial_alpha,
+            "initial_alpha": tune.uniform(0.01, 0.15),
+            "target_entropy": tune.choice(["auto", 0.3, 0.1]),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
