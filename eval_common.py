@@ -262,6 +262,8 @@ def format_table(results: list[dict]) -> str:
         ("bad/dis %",  lambda r: f"{r.get('bad_disobey_rel_pct', 0.0):6.2f}"),
         ("decisions",  lambda r: str(r["n_validator_decisions"])),
         ("tot_dis",    lambda r: str(r.get("total_disobey", 0))),
+        ("tot_dis/tot_dec",    lambda r: f"{(r.get('total_disobey', 0) / r['n_validator_decisions']):.4f}"
+                                  if r.get("n_validator_decisions") else "0.0000"),
     ]
     headers = [h for h, _ in cols]
     rows = [[fn(r) for _, fn in cols] for r in results]
