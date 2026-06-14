@@ -29,21 +29,24 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
     if algorithm_name == "dqn":
         if learns_validator:
             epsilon = [(0, 1.0), (10_000, 0.05)]
-
             buffer_capacity = 500_000
+            replay_alpha = 0.5
+            warmup = 2_000
         else:
-            epsilon = [(0, 1.0), (10_000, 0.05)]  
+            epsilon = [(0, 1.0), (10_000, 0.05)]
             buffer_capacity = 100_000
+            replay_alpha = 0.8
+            warmup = 300
         config = DQNConfig().training(
             replay_buffer_config={
                 "enable_replay_buffer_api": True,
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
                 "capacity": buffer_capacity,
-                "alpha": 0.8,
+                "alpha": replay_alpha,
                 "beta": 0.4,
             },
             train_batch_size_per_learner=512,
-            num_steps_sampled_before_learning_starts=300,
+            num_steps_sampled_before_learning_starts=warmup,
             epsilon=epsilon,
         )
 
@@ -63,7 +66,12 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
         )
 
     if algorithm_name == "sac":
-        initial_alpha = 0.2 if learns_validator else 0.05
+        if learns_validator:
+            initial_alpha = 0.2
+            warmup = 300
+        else:
+            initial_alpha = 0.05
+            warmup = 2_000
         config = SACConfig().training(
             replay_buffer_config={
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
@@ -72,7 +80,7 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
                 "beta": 0.4,
             },
             train_batch_size_per_learner=512,
-            num_steps_sampled_before_learning_starts=300,
+            num_steps_sampled_before_learning_starts=warmup,
             initial_alpha=initial_alpha,
         )
 
@@ -90,22 +98,24 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
     n_step_choices = [1]
     if algorithm_name == "dqn":
         if learns_validator:
-            # increase the exploration
             epsilon_choices = [
-                [(0, 1.0), (100_000, 0.10)],
-                [(0, 1.0), (200_000, 0.10)],
-                [(0, 1.0), (300_000, 0.15)],
+                [(0, 1.0), (80_000, 0.10), (200_000, 0.02)],
+                [(0, 1.0), (120_000, 0.10), (230_000, 0.02)],
+                [(0, 1.0), (150_000, 0.15), (240_000, 0.03)],
             ]
-            gamma = tune.uniform(0.90, 0.97)
-            lr = tune.loguniform(3e-5, 3e-4)
+
+            gamma = tune.uniform(0.92, 0.965)
+            lr = tune.loguniform(3e-5, 1.5e-4)
         else:
+            # Winners cluster tightly: lr ~2.5e-4, gamma .982/.990, tnuf
+            # 200/500, eps decay 30k/100k (tail 0.69, eval 68%). Tighten ranges
+            # around them; drop the too-fast 10k eps and the dead lr tails.
             epsilon_choices = [
-                [(0, 1.0), (10_000, 0.05)],
                 [(0, 1.0), (30_000, 0.05)],
                 [(0, 1.0), (100_000, 0.10)],
             ]
-            gamma = tune.uniform(0.98, 0.995)
-            lr = tune.loguniform(1e-4, 6e-4)
+            gamma = tune.uniform(0.98, 0.992)
+            lr = tune.loguniform(1.5e-4, 4e-4)
         return {
             "lr": lr,
             "gamma": gamma,
@@ -117,10 +127,11 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
         if learns_validator:
 
             return {
-                "lr": tune.loguniform(5e-5, 1e-3),
-                "entropy_coeff": tune.uniform(0.0, 0.03),
-                "clip_param": tune.uniform(0.1, 0.4),
-                "num_epochs": tune.choice([10, 20, 30]),
+                "lr": tune.loguniform(1e-4, 4e-4),
+                "gamma": tune.uniform(0.90, 0.96),
+                "entropy_coeff": tune.uniform(0.0, 0.02),
+                "clip_param": tune.uniform(0.1, 0.2),
+                "num_epochs": tune.choice([5, 10]),
             }
         return {
             "lr": tune.loguniform(1e-5, 1e-3),
@@ -141,14 +152,14 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
                 "initial_alpha": tune.uniform(0.2, 0.8),
             }
         return {
-            "actor_lr": tune.loguniform(2e-5, 3e-4),
-            "critic_lr": tune.loguniform(3e-5, 3e-4),
-            "alpha_lr": tune.loguniform(1e-3, 1e-2),
-            "tau": tune.uniform(0.002, 0.008),
-            "gamma": tune.uniform(0.98, 0.997),
+            "actor_lr": tune.loguniform(3e-5, 2e-4),
+            "critic_lr": tune.loguniform(1e-4, 3e-4),
+            "alpha_lr": tune.loguniform(1e-3, 5e-3),
+            "tau": tune.uniform(0.004, 0.007),
+            "gamma": tune.uniform(0.985, 0.995),
             "n_step": tune.choice(n_step_choices),
-            "initial_alpha": tune.uniform(0.01, 0.15),
-            "target_entropy": tune.choice(["auto", 0.3, 0.1]),
+            "initial_alpha": tune.uniform(0.05, 0.2),
+            "target_entropy": tune.choice([0.1, 0.05, 0.2]),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
