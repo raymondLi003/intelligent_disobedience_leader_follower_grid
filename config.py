@@ -71,9 +71,9 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
             warmup = 300
             target_entropy = "auto"
         else:
-            initial_alpha = 0.05
-            warmup = 2_000
-            target_entropy = 0.5
+            initial_alpha = 0.135
+            warmup = 300
+            target_entropy = 0.1
         config = SACConfig().training(
             replay_buffer_config={
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
@@ -159,14 +159,14 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
                 "initial_alpha": tune.uniform(0.2, 0.8),
             }
         return {
-            "actor_lr": tune.loguniform(3e-5, 2e-4),
-            "critic_lr": tune.loguniform(1e-4, 3e-4),
-            "alpha_lr": tune.loguniform(3e-4, 3e-3),
+            "actor_lr": tune.loguniform(1e-4, 3e-4),
+            "critic_lr": tune.loguniform(1.5e-4, 3e-4),
+            "alpha_lr": tune.loguniform(1.5e-3, 4e-3),
             "tau": tune.uniform(0.004, 0.007),
-            "gamma": tune.uniform(0.985, 0.995),
-            "n_step": tune.choice(n_step_choices),
-            "initial_alpha": tune.uniform(0.05, 0.2),
-            "target_entropy": tune.choice([0.3, 0.5, 0.7]),
+            "gamma": tune.uniform(0.99, 0.995),
+            "n_step": tune.choice([1, 3]),
+            "initial_alpha": tune.uniform(0.1, 0.2),
+            "target_entropy": tune.choice([0.1, 0.2]),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
