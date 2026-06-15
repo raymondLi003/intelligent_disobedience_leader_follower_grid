@@ -125,13 +125,12 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
         }
     if algorithm_name == "ppo":
         if learns_validator:
-
             return {
-                "lr": tune.loguniform(1e-4, 4e-4),
-                "gamma": tune.uniform(0.90, 0.96),
-                "entropy_coeff": tune.uniform(0.0, 0.02),
-                "clip_param": tune.uniform(0.1, 0.2),
-                "num_epochs": tune.choice([5, 10]),
+                "lr": tune.loguniform(2.5e-4, 3.5e-4),
+                "gamma": tune.uniform(0.94, 0.955),
+                "entropy_coeff": tune.uniform(0.004, 0.01),
+                "clip_param": tune.uniform(0.14, 0.2),
+                "num_epochs": tune.choice([10, 15]),
             }
         return {
             "lr": tune.loguniform(1e-5, 1e-3),

@@ -74,6 +74,13 @@ def load_checkpoint_factory(exp_name: str, policy_id: str):
 def main():
     parser = argparse.ArgumentParser()
     add_config_sampling_args(parser)
+    parser.add_argument(
+        "--only",
+        type=str,
+        default=None,
+        help="comma-separated substrings; only run pairings whose name matches one. "
+             "e.g. --only ppo_perfect_proposer_x_learned_validator",
+    )
     args = parser.parse_args()
 
     ray.init(ignore_reinit_error=True)
@@ -103,6 +110,15 @@ def main():
         # bind both vars as defaults so the lambda closure captures the right one
         llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
         pairings.append((f"perfect_x_llm_{display_name}", perfect_proposer_factory, llm_factory))
+
+    if args.only:
+        needles = [s.strip() for s in args.only.split(",") if s.strip()]
+        pairings = [p for p in pairings if any(n in p[0] for n in needles)]
+        print(f"--only matched {len(pairings)} pairing(s): {[p[0] for p in pairings]}")
+        if not pairings:
+            print("Nothing to run. Exiting.")
+            ray.shutdown()
+            return
 
     results = []
     
