@@ -113,6 +113,37 @@ def scheduler_for(algorithm_name: str, iters: int, learns_validator: bool = Fals
     )
 
 
+# Rolling window in terms of checkpoints 
+ROLLING_WINDOW = 3
+# Variance penalty: score = rolling_mean - STD_PENALTY * rolling_std.
+STD_PENALTY = 1.0
+
+
+def _rolling_best_checkpoint(result, metric: str, window: int = ROLLING_WINDOW):
+    """Choose the checkpoint at the highest variance-penalized rolling mean of `metric`.
+    """
+    try:
+        df = result.metrics_dataframe
+        ckpts = result.best_checkpoints  # list of (Checkpoint, metrics_dict)
+        if df is None or metric not in df.columns or not ckpts:
+            return result.checkpoint, float("-inf")
+        roll_mean = df[metric].rolling(window=window, min_periods=1).mean()
+        roll_std = df[metric].rolling(window=window, min_periods=1).std().fillna(0.0)
+        score = roll_mean - STD_PENALTY * roll_std
+        iter_to_score = dict(zip(df["training_iteration"], score))
+        best_ckpt, best_score = None, float("-inf")
+        for ckpt, m in ckpts:
+            s = iter_to_score.get(m.get("training_iteration"))
+            if s is not None and float(s) > best_score:
+                best_score, best_ckpt = float(s), ckpt
+        if best_ckpt is None:
+            return result.checkpoint, float("-inf")
+        return best_ckpt, best_score
+    except Exception as e:
+        print(f"  rolling-mean selection failed ({e}); using last checkpoint")
+        return result.checkpoint, float("-inf")
+
+
 def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
     config = create_rllib_config(agent_config)
     config.callbacks([ActionLoggerCallback])
@@ -165,22 +196,10 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
     )
 
     results = tuner.fit()
-    # In autotune mode, pick the best trial by the per-policy metric we set
-    # and it only picks the ones with a full run
-    # In single-trial mode, this just returns the only trial.
+    metric = metric_for(agent_config)
+
+
     if samples > 1:
-        metric = metric_for(agent_config)
-
-        def _metric_val(r):
-            md = r.metrics or {}
-            if metric in md:                      
-                v = md[metric]
-            else:                                 
-                v = md
-                for part in metric.split("/"):
-                    v = v.get(part) if isinstance(v, dict) else None
-            return v if isinstance(v, (int, float)) else float("-inf")
-
         def _iters(r):
             return (r.metrics or {}).get("training_iteration", 0)
 
@@ -188,12 +207,15 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
         if not full_length:
             print(f"  warning: no trial reached {iters} iters; falling back to all trials")
             full_length = list(results)
-        best = max(full_length, key=_metric_val)
+        scored = [(r, *_rolling_best_checkpoint(r, metric)) for r in full_length]
+        best, best_ckpt, best_score = max(scored, key=lambda x: x[2])
+        print(f"  selected trial by rolling-mean {metric}={best_score:.4f}")
     else:
         best = results.get_best_result()
+        best_ckpt, _ = _rolling_best_checkpoint(best, metric)
 
-    if best.checkpoint is not None:
-        best.checkpoint.to_directory(LOG_DIR / "tune" / name / "best_checkpoint")
+    if best_ckpt is not None:
+        best_ckpt.to_directory(LOG_DIR / "tune" / name / "best_checkpoint")
 
     return {
         "experiment": name,
@@ -271,7 +293,10 @@ def main():
             single_agent=False,
             max_steps=MAX_ENV_STEPS,
             proposer_sees_lava=ac.proposer_sees_lava,
-            randomize_spawn=(ac.validator_policy == ValidatorPolicies.LEARNED),
+            randomize_spawn=(
+                ac.proposer_policy == ProposerPolicies.LEARNED
+                or ac.validator_policy == ValidatorPolicies.LEARNED
+            ),
         ))
         print(f"\n{'=' * 78}")
         print(f">>> [{i}/{len(agent_configs)}] Training: {experiment_name(agent_config)}")

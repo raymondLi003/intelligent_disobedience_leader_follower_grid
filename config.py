@@ -120,7 +120,7 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
                 [(0, 1.0), (100_000, 0.15), (300_000, 0.07)],
                 [(0, 1.0), (150_000, 0.12), (350_000, 0.10)],
             ]
-            gamma = tune.uniform(0.985, 0.993)
+            gamma = tune.uniform(0.988, 0.995)
             lr = tune.choice(lr_choices)
             tnuf_choices = [500]
             n_step_local = [1]
@@ -161,12 +161,12 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
         return {
             "actor_lr": tune.loguniform(1e-4, 3e-4),
             "critic_lr": tune.loguniform(1.5e-4, 3e-4),
-            "alpha_lr": tune.loguniform(1.5e-3, 4e-3),
+            "alpha_lr": tune.loguniform(5e-4, 4e-3),
             "tau": tune.uniform(0.004, 0.007),
-            "gamma": tune.uniform(0.99, 0.995),
+            "gamma": tune.uniform(0.97, 0.99),
             "n_step": tune.choice([1, 3]),
             "initial_alpha": tune.uniform(0.1, 0.2),
-            "target_entropy": tune.choice([0.1, 0.2]),
+            "target_entropy": tune.choice([0.05, 0.1]),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
