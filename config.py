@@ -109,18 +109,26 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
 
             gamma = tune.uniform(0.92, 0.965)
             lr = tune.loguniform(3e-5, 1.5e-4)
+            tnuf_choices = [200, 500]
+            n_step_local = n_step_choices
         else:
-            epsilon_choices = [
-                [(0, 1.0), (50_000, 0.10)],
-                [(0, 1.0), (100_000, 0.15), (250_000, 0.05)],
+            lr_choices = [
+                [[0, 3.3e-4], [300_000, 1.0e-4]],
+                [[0, 2.5e-4], [350_000, 8.0e-5]],
             ]
-            gamma = tune.uniform(0.98, 0.992)
-            lr = tune.loguniform(1.5e-4, 4e-4)
+            epsilon_choices = [
+                [(0, 1.0), (100_000, 0.15), (300_000, 0.07)],
+                [(0, 1.0), (150_000, 0.12), (350_000, 0.10)],
+            ]
+            gamma = tune.uniform(0.985, 0.993)
+            lr = tune.choice(lr_choices)
+            tnuf_choices = [500]
+            n_step_local = [1]
         return {
             "lr": lr,
             "gamma": gamma,
-            "target_network_update_freq": tune.choice([200, 500]),
-            "n_step": tune.choice(n_step_choices),
+            "target_network_update_freq": tune.choice(tnuf_choices),
+            "n_step": tune.choice(n_step_local),
             "epsilon": tune.choice(epsilon_choices),
         }
     if algorithm_name == "ppo":
