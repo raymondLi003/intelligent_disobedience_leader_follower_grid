@@ -117,8 +117,8 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
                 [[0, 2.5e-4], [350_000, 8.0e-5]],
             ]
             epsilon_choices = [
-                [(0, 1.0), (100_000, 0.15), (300_000, 0.07)],
-                [(0, 1.0), (150_000, 0.12), (350_000, 0.10)],
+                [(0, 1.0), (150_000, 0.20), (400_000, 0.10)],
+                [(0, 1.0), (200_000, 0.15), (450_000, 0.12)],
             ]
             gamma = tune.uniform(0.988, 0.995)
             lr = tune.choice(lr_choices)
@@ -163,8 +163,8 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             "critic_lr": tune.loguniform(1.5e-4, 3e-4),
             "alpha_lr": tune.loguniform(5e-4, 4e-3),
             "tau": tune.uniform(0.004, 0.007),
-            "gamma": tune.uniform(0.985, 0.995),
-            "n_step": tune.choice([1, 3]),
+            "gamma": tune.uniform(0.99, 0.995),
+            "n_step": tune.choice([1]),
             "initial_alpha": tune.uniform(0.1, 0.2),
             "target_entropy": tune.choice([0.1, 0.2]),
         }
