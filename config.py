@@ -163,10 +163,10 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             "critic_lr": tune.loguniform(1.5e-4, 3e-4),
             "alpha_lr": tune.loguniform(5e-4, 4e-3),
             "tau": tune.uniform(0.004, 0.007),
-            "gamma": tune.uniform(0.97, 0.99),
+            "gamma": tune.uniform(0.985, 0.995),
             "n_step": tune.choice([1, 3]),
             "initial_alpha": tune.uniform(0.1, 0.2),
-            "target_entropy": tune.choice([0.05, 0.1]),
+            "target_entropy": tune.choice([0.1, 0.2]),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
