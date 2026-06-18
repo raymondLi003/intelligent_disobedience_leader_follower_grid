@@ -1,3 +1,4 @@
+import copy
 from functools import partial
 from typing import Hashable
 
@@ -23,6 +24,11 @@ from utils import (
     DEFAULT_SINGLE_AGENT_CONV_MODEL_CONFIG, CATALOG_CLASS, )
 
 
+
+DQN_PROPOSER_MODEL_CONFIG = copy.deepcopy(DEFAULT_MULTI_AGENT_MODEL_CONFIG)
+DQN_PROPOSER_MODEL_CONFIG["head_fcnet_hiddens"] = [256, 128]
+
+
 def create_algorithm_config(algorithm_name: str, learns_validator: bool = False) -> AlgorithmConfig:
 
     config = None
@@ -38,7 +44,7 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
             buffer_capacity = 100_000
             replay_alpha = 0.8
             warmup = 300
-            n_step = 3
+            n_step = 1
         config = DQNConfig().training(
             replay_buffer_config={
                 "enable_replay_buffer_api": True,
@@ -119,18 +125,38 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             n_step_local = n_step_choices
         else:
             lr_choices = [
-                [[0, 3.3e-4], [300_000, 1.0e-4]],
                 [[0, 2.5e-4], [350_000, 8.0e-5]],
+                [[0, 2.0e-4], [400_000, 6.0e-5]],
+                [[0, 3.3e-4], [300_000, 1.0e-4]],
             ]
             epsilon_choices = [
                 [(0, 1.0), (200_000, 0.20), (500_000, 0.10)],
-                [(0, 1.0), (250_000, 0.15), (550_000, 0.12)],
-                [(0, 1.0), (150_000, 0.20), (400_000, 0.10)],
+                [(0, 1.0), (300_000, 0.20), (650_000, 0.05)],
+                [(0, 1.0), (250_000, 0.15), (550_000, 0.10)],
             ]
-            gamma = tune.uniform(0.98, 0.995)
+            gamma = tune.uniform(0.98, 0.99)
             lr = tune.choice(lr_choices)
-            tnuf_choices = [250, 500]
-            n_step_local = [1, 3, 5]
+            tnuf_choices = [500, 1000]
+            n_step_local = [1]
+
+            def _buffer(capacity):
+                return {
+                    "enable_replay_buffer_api": True,
+                    "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
+                    "capacity": capacity,
+                    "alpha": 0.8,
+                    "beta": 0.4,
+                }
+
+            return {
+                "lr": lr,
+                "gamma": gamma,
+                "target_network_update_freq": tune.choice(tnuf_choices),
+                "n_step": tune.choice(n_step_local),
+                "epsilon": tune.choice(epsilon_choices),
+                "train_batch_size_per_learner": tune.choice([512, 1024]),
+                "replay_buffer_config": tune.choice([_buffer(100_000), _buffer(250_000)]),
+            }
         return {
             "lr": lr,
             "gamma": gamma,
@@ -226,9 +252,14 @@ def agent_config_policy_mapping(
 def get_multi_agent_rl_module_specs(policy_names: list[str], agent_config: AgentConfig) -> dict[str, RLModuleSpec]:
     rl_module_specs = {}
     if ProposerPolicies.LEARNED in policy_names:
+        proposer_model_config = (
+            DQN_PROPOSER_MODEL_CONFIG
+            if agent_config.algorithm_name == "dqn"
+            else DEFAULT_MULTI_AGENT_MODEL_CONFIG
+        )
         rl_module_specs[ProposerPolicies.LEARNED] = RLModuleSpec(
             module_class=PROPOSER_ALGORITHM_MODULES[agent_config.algorithm_name],
-            model_config=DEFAULT_MULTI_AGENT_MODEL_CONFIG,
+            model_config=proposer_model_config,
             catalog_class=CATALOG_CLASS[agent_config.algorithm_name],
         )
 
