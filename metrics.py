@@ -37,6 +37,22 @@ class CustomTBXLoggerCallback(TBXLoggerCallback):
         super().log_trial_result(iteration, trial, result)
 
 
+class EvalReturnForwardCallback(DefaultCallbacks):
+    """use the greedy, fixed-spawn evaluation return as the metric
+    """
+
+    METRIC_KEY = "eval_return"
+
+    def on_train_result(self, *, algorithm, metrics_logger=None, result: Dict, **kwargs) -> None:
+        env_runners = (result.get("evaluation") or {}).get("env_runners") or {}
+        returns = env_runners.get("module_episode_returns_mean") or {}
+        # just one learned policy per eval
+        val = returns.get("learned_proposer", returns.get("learned_validator"))
+        if val is not None:
+            self._last = float(val)
+        result[self.METRIC_KEY] = getattr(self, "_last", float("nan"))
+
+
 class ActionLoggerCallback(DefaultCallbacks):
     def on_episode_end(
         self,

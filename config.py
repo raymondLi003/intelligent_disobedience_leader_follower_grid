@@ -32,18 +32,13 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
             buffer_capacity = 500_000
             replay_alpha = 0.5
             warmup = 2_000
-            extra = {"n_step": 1}
+            n_step = 1
         else:
-            epsilon = [(0, 1.0), (150_000, 0.20), (400_000, 0.10)]
+            epsilon = [(0, 1.0), (200_000, 0.20), (500_000, 0.10)]
             buffer_capacity = 100_000
             replay_alpha = 0.8
             warmup = 300
-            extra = {
-                "n_step": 1,
-                "gamma": 0.985,
-                "target_network_update_freq": 250,
-                "lr": [[0, 2.5e-4], [350_000, 8.0e-5]],
-            }
+            n_step = 3
         config = DQNConfig().training(
             replay_buffer_config={
                 "enable_replay_buffer_api": True,
@@ -55,7 +50,7 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
             train_batch_size_per_learner=512,
             num_steps_sampled_before_learning_starts=warmup,
             epsilon=epsilon,
-            **extra,
+            n_step=n_step,
         )
 
     if algorithm_name == "ppo":
@@ -79,13 +74,11 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
             warmup = 300
             target_entropy = "auto"
             n_step = 1
-            tau = 0.005  
         else:
             initial_alpha = 0.2
             warmup = 300
-            target_entropy = 0.2
+            target_entropy = 0.35
             n_step = 3
-            tau = 0.01
         config = SACConfig().training(
             replay_buffer_config={
                 "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
@@ -98,7 +91,6 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
             initial_alpha=initial_alpha,
             target_entropy=target_entropy,
             n_step=n_step,
-            tau=tau,
         )
 
     if config is None:
@@ -135,9 +127,9 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
                 [(0, 1.0), (250_000, 0.15), (550_000, 0.12)],
                 [(0, 1.0), (150_000, 0.20), (400_000, 0.10)],
             ]
-            gamma = tune.uniform(0.98, 0.99)
+            gamma = tune.uniform(0.98, 0.995)
             lr = tune.choice(lr_choices)
-            tnuf_choices = [100, 250]
+            tnuf_choices = [250, 500]
             n_step_local = [1, 3, 5]
         return {
             "lr": lr,
@@ -177,15 +169,11 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             "actor_lr": tune.loguniform(1e-4, 3e-4),
             "critic_lr": tune.loguniform(1.5e-4, 3e-4),
             "alpha_lr": tune.loguniform(5e-4, 4e-3),
-
-            "tau": tune.uniform(0.006, 0.02),
-
-            "gamma": tune.uniform(0.98, 0.99),
-
-            "n_step": tune.choice([3, 5]),
-            "initial_alpha": tune.uniform(0.1, 0.25),
-
-            "target_entropy": tune.uniform(0.1, 0.25),
+            "tau": tune.uniform(0.004, 0.007),
+            "gamma": tune.uniform(0.985, 0.995),
+            "n_step": tune.choice([1, 3, 5]),
+            "initial_alpha": tune.uniform(0.1, 0.3),
+            "target_entropy": tune.uniform(0.2, 0.5),
         }
     raise ValueError(f"Unknown algorithm: {algorithm_name}")
 

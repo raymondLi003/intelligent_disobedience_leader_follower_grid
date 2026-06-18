@@ -30,16 +30,26 @@ from pathlib import Path
 # otherwise the AIR reporter dumps the entire dict in the output 
 os.environ.setdefault("RAY_AIR_NEW_OUTPUT", "0")
 
+import numpy as np
 import ray
+import torch
+import tree
 from ray import tune
 from ray.tune import Checkpoint, register_env
 
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
+from ray.rllib import SampleBatch
+from ray.rllib.core.rl_module import RLModule
 
 from config import create_rllib_config, get_search_space
 from env import GridWorldEnv
-from metrics import ActionLoggerCallback, CustomTBXLoggerCallback
+from eval_common import (
+    _extract_action,
+    perfect_validator_factory,
+    sample_valid_env_variations,
+)
+from metrics import ActionLoggerCallback, CustomTBXLoggerCallback, EvalReturnForwardCallback
 from utils import (
     AgentConfig,
     GRID_SIZE,
@@ -96,7 +106,11 @@ def metric_for(agent_config: AgentConfig) -> str:
       env_runners/agent_episode_returns_mean/<agent_id>     (keyed by agent: proposer/validator)
       env_runners/module_episode_returns_mean/<policy_name> (keyed by policy: learned_proposer/learned_validator)
     We want the policy-keyed one so we always pick the LEARNED side.
+
+    use the eval return as the metric
     """
+    if _can_true_eval(agent_config):
+        return EvalReturnForwardCallback.METRIC_KEY
     if agent_config.proposer_policy == ProposerPolicies.LEARNED:
         return "env_runners/module_episode_returns_mean/learned_proposer"
     if agent_config.validator_policy == ValidatorPolicies.LEARNED:
@@ -144,9 +158,130 @@ def _rolling_best_checkpoint(result, metric: str, window: int = ROLLING_WINDOW):
         return result.checkpoint, float("-inf")
 
 
+
+TRUE_EVAL_TOPK = 3
+
+EVAL_ENV_NAME = "eval_env"
+EVAL_INTERVAL = 10      
+EVAL_DURATION = 50      
+
+
+def _can_true_eval(agent_config: AgentConfig) -> bool:
+    """actual  selection for the learned prop and perfect validator"""
+    return (
+        agent_config.proposer_policy == ProposerPolicies.LEARNED
+        and agent_config.validator_policy == ValidatorPolicies.PERFECT
+    )
+
+
+def _add_evaluation(config):
+    """use a greedy fixed spawn eval
+    """
+    from ray.rllib.algorithms import AlgorithmConfig
+    return config.evaluation(
+        evaluation_interval=EVAL_INTERVAL,
+        evaluation_duration=EVAL_DURATION,
+        evaluation_duration_unit="episodes",
+        evaluation_num_env_runners=1,
+        evaluation_config=AlgorithmConfig.overrides(env=EVAL_ENV_NAME, explore=False),
+    )
+
+
+def _topk_checkpoints(result, metric: str, k: int = TRUE_EVAL_TOPK):
+    """rank top k checkpoints for true evaluation"""
+    df = result.metrics_dataframe
+    ckpts = result.best_checkpoints  # list of (Checkpoint, metrics_dict)
+    if df is None or metric not in df.columns or not ckpts:
+        return [(result.checkpoint, float("-inf"))] if result.checkpoint else []
+    roll_mean = df[metric].rolling(window=ROLLING_WINDOW, min_periods=1).mean()
+    roll_std = df[metric].rolling(window=ROLLING_WINDOW, min_periods=1).std().fillna(0.0)
+    score = roll_mean - STD_PENALTY * roll_std
+    iter_to_score = dict(zip(df["training_iteration"], score))
+    scored = [
+        (ckpt, float(iter_to_score.get(m.get("training_iteration"), float("-inf"))))
+        for ckpt, m in ckpts
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:k]
+
+
+def _true_eval_goal_pct(ckpt: Checkpoint, variations: list) -> float:
+    """get the goal completion percentage
+    """
+    ckpt_dir = ckpt.to_directory()
+    proposer_path = (
+        Path(ckpt_dir) / "learner_group" / "learner" / "rl_module" / ProposerPolicies.LEARNED
+    )
+    proposer = RLModule.from_checkpoint(str(proposer_path))
+
+    env = GridWorldEnv(
+        size=GRID_SIZE,
+        num_lava_tiles=NUM_LAVA_TILES,
+        single_agent=False,
+        max_steps=MAX_ENV_STEPS,
+        proposer_sees_lava=False,
+        randomize_spawn=False,
+    )
+    validator = perfect_validator_factory(env)
+
+    def _batch(obs_agent):
+        return {SampleBatch.OBS: tree.map_structure(
+            lambda x: torch.tensor(np.expand_dims(x, axis=0)), obs_agent)}
+
+    wins = 0
+    for variation in variations:
+        if not variation:
+            obs, _ = env.reset()
+        else:
+            obs, _ = env.reset(options={"lava_positions": list(variation)})
+
+        terminated = {"__all__": False}
+        truncated = {"__all__": False}
+        rewards: dict = {}
+        while not terminated["__all__"]:
+            if "proposer" in obs:
+                out = proposer.forward_inference(_batch(obs["proposer"]))
+                actions = {"proposer": _extract_action(proposer, out)}
+            else:
+                out = validator.forward_inference(_batch(obs["validator"]))
+                actions = {"validator": _extract_action(validator, out)}
+            obs, rewards, terminated, truncated, _ = env.step(actions)
+            if truncated["__all__"]:
+                break
+
+        if not truncated["__all__"] and rewards.get("proposer", -1.0) > 0.0:
+            wins += 1
+
+    return 100.0 * wins / len(variations) if variations else 0.0
+
+
+def _select_by_true_eval(full_length: list, metric: str):
+    """Pick (trial, checkpoint, goal_pct) by the real eval objective across the
+    top-k proxy checkpoints of every full-length trial."""
+    variations = sample_valid_env_variations(GRID_SIZE, NUM_LAVA_TILES)
+    best, best_ckpt, best_goal = None, None, float("-inf")
+    for r in full_length:
+        for ckpt, proxy in _topk_checkpoints(r, metric):
+            if ckpt is None:
+                continue
+            try:
+                goal = _true_eval_goal_pct(ckpt, variations)
+            except Exception as e:
+                print(f"  true-eval failed for a checkpoint ({e}); skipping")
+                continue
+            print(f"  trial true-eval goal%={goal:6.2f}  (proxy {metric}={proxy:.3f})")
+            if goal > best_goal:
+                best_goal, best, best_ckpt = goal, r, ckpt
+    return best, best_ckpt, best_goal
+
+
 def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
     config = create_rllib_config(agent_config)
-    config.callbacks([ActionLoggerCallback])
+    callbacks = [ActionLoggerCallback]
+    if _can_true_eval(agent_config):
+        config = _add_evaluation(config)
+        callbacks.append(EvalReturnForwardCallback)
+    config.callbacks(callbacks)
 
     name = experiment_name(agent_config)
     param_space = config.to_dict()
@@ -199,6 +334,9 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
     metric = metric_for(agent_config)
 
 
+    selection_goal_pct = None
+    true_eval = _can_true_eval(agent_config)
+
     if samples > 1:
         def _iters(r):
             return (r.metrics or {}).get("training_iteration", 0)
@@ -207,12 +345,28 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
         if not full_length:
             print(f"  warning: no trial reached {iters} iters; falling back to all trials")
             full_length = list(results)
-        scored = [(r, *_rolling_best_checkpoint(r, metric)) for r in full_length]
-        best, best_ckpt, best_score = max(scored, key=lambda x: x[2])
-        print(f"  selected trial by rolling-mean {metric}={best_score:.4f}")
+        if true_eval:
+            # use the actual fix-spawn eval return
+            best, best_ckpt, selection_goal_pct = _select_by_true_eval(full_length, metric)
+            print(f"  selected trial by TRUE eval goal%={selection_goal_pct:.2f}")
+            if best is None:  # every true-eval failed, we fall back to proxy
+                scored = [(r, *_rolling_best_checkpoint(r, metric)) for r in full_length]
+                best, best_ckpt, best_score = max(scored, key=lambda x: x[2])
+                print(f"  (fallback) selected trial by rolling-mean {metric}={best_score:.4f}")
+        else:
+            scored = [(r, *_rolling_best_checkpoint(r, metric)) for r in full_length]
+            best, best_ckpt, best_score = max(scored, key=lambda x: x[2])
+            print(f"  selected trial by rolling-mean {metric}={best_score:.4f}")
     else:
         best = results.get_best_result()
-        best_ckpt, _ = _rolling_best_checkpoint(best, metric)
+        if true_eval:
+            _, best_ckpt, selection_goal_pct = _select_by_true_eval([best], metric)
+            if best_ckpt is None:
+                best_ckpt, _ = _rolling_best_checkpoint(best, metric)
+            else:
+                print(f"  selected checkpoint by TRUE eval goal%={selection_goal_pct:.2f}")
+        else:
+            best_ckpt, _ = _rolling_best_checkpoint(best, metric)
 
     if best_ckpt is not None:
         best_ckpt.to_directory(LOG_DIR / "tune" / name / "best_checkpoint")
@@ -227,6 +381,8 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
         },
         "num_samples": samples,
         "metric_optimized": metric_for(agent_config) if samples > 1 else None,
+        "selected_by": "true_eval_goal_pct" if true_eval else "rolling_mean_proxy",
+        "selection_goal_pct": selection_goal_pct,
         "final_params": _jsonable(best.config),
         "search_space": _jsonable(param_space),
         "final_metrics": _jsonable(best.metrics) if best.metrics else None,
@@ -297,6 +453,15 @@ def main():
                 ac.proposer_policy == ProposerPolicies.LEARNED
                 or ac.validator_policy == ValidatorPolicies.LEARNED
             ),
+        ))
+        # use the actual eval return 
+        register_env(EVAL_ENV_NAME, lambda _, ac=agent_config: GridWorldEnv(
+            size=GRID_SIZE,
+            num_lava_tiles=NUM_LAVA_TILES,
+            single_agent=False,
+            max_steps=MAX_ENV_STEPS,
+            proposer_sees_lava=ac.proposer_sees_lava,
+            randomize_spawn=False,
         ))
         print(f"\n{'=' * 78}")
         print(f">>> [{i}/{len(agent_configs)}] Training: {experiment_name(agent_config)}")
