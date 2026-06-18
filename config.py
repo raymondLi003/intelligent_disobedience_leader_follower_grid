@@ -154,7 +154,6 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
                 "target_network_update_freq": tune.choice(tnuf_choices),
                 "n_step": tune.choice(n_step_local),
                 "epsilon": tune.choice(epsilon_choices),
-                "train_batch_size_per_learner": tune.choice([512, 1024]),
                 "replay_buffer_config": tune.choice([_buffer(100_000), _buffer(250_000)]),
             }
         return {
