@@ -137,7 +137,7 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             gamma = tune.uniform(0.98, 0.99)
             lr = tune.choice(lr_choices)
             tnuf_choices = [500, 1000]
-            n_step_local = [1]
+            n_step_local = [1, 2, 3, 4]
 
             def _buffer(capacity):
                 return {
@@ -196,7 +196,7 @@ def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dic
             "alpha_lr": tune.loguniform(5e-4, 4e-3),
             "tau": tune.uniform(0.004, 0.007),
             "gamma": tune.uniform(0.985, 0.995),
-            "n_step": tune.choice([1, 3, 5]),
+            "n_step": tune.choice([1, 2, 3, 4]),
             "initial_alpha": tune.uniform(0.1, 0.3),
             "target_entropy": tune.uniform(0.2, 0.5),
         }
