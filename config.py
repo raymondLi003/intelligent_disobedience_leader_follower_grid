@@ -29,178 +29,178 @@ DQN_PROPOSER_MODEL_CONFIG = copy.deepcopy(DEFAULT_MULTI_AGENT_MODEL_CONFIG)
 DQN_PROPOSER_MODEL_CONFIG["head_fcnet_hiddens"] = [256, 128]
 
 
+def _prioritized_episode_buffer(capacity: int, alpha: float, beta: float = 0.4,
+                                enable_api: bool = False) -> dict:
+    """Prioritized multi-agent episode replay buffer config shared by DQN and SAC."""
+    cfg = {}
+    if enable_api:
+        cfg["enable_replay_buffer_api"] = True
+    cfg.update({
+        "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
+        "capacity": capacity,
+        "alpha": alpha,
+        "beta": beta,
+    })
+    return cfg
+
+
+def _dqn_algorithm_config(learns_validator: bool) -> AlgorithmConfig:
+    if learns_validator:
+        epsilon = [(0, 1.0), (10_000, 0.05)]
+        buffer_capacity = 500_000
+        replay_alpha = 0.5
+        warmup = 2_000
+    else:
+        epsilon = [(0, 1.0), (10_000, 0.05)]
+        buffer_capacity = 500_000
+        replay_alpha = 0.5
+        warmup = 2_000
+    return DQNConfig().training(
+        replay_buffer_config=_prioritized_episode_buffer(
+            buffer_capacity, replay_alpha, enable_api=True),
+        train_batch_size_per_learner=512,
+        num_steps_sampled_before_learning_starts=warmup,
+        epsilon=epsilon,
+        n_step=1,
+    )
+
+
+def _ppo_algorithm_config(learns_validator: bool) -> AlgorithmConfig:
+    if learns_validator:
+        entropy_coeff = 0.01
+    else:
+        entropy_coeff = [
+            (0, 0.2),
+            (200_000, 0.05),
+            (800_000, 0.005),
+        ]
+    return PPOConfig().training(entropy_coeff=entropy_coeff, train_batch_size=512)
+
+
+def _sac_algorithm_config(learns_validator: bool) -> AlgorithmConfig:
+    if learns_validator:
+        target_entropy = "auto"
+        n_step = 1
+    else:
+        target_entropy = "auto"
+        n_step = 1
+    return SACConfig().training(
+        replay_buffer_config=_prioritized_episode_buffer(100_000, 0.8),
+        train_batch_size_per_learner=512,
+        num_steps_sampled_before_learning_starts=300,
+        initial_alpha=0.2,
+        target_entropy=target_entropy,
+        n_step=n_step,
+    )
+
+
+_ALGORITHM_CONFIG_BUILDERS = {
+    "dqn": _dqn_algorithm_config,
+    "ppo": _ppo_algorithm_config,
+    "sac": _sac_algorithm_config,
+}
+
+
 def create_algorithm_config(algorithm_name: str, learns_validator: bool = False) -> AlgorithmConfig:
-
-    config = None
-    if algorithm_name == "dqn":
-        if learns_validator:
-            epsilon = [(0, 1.0), (10_000, 0.05)]
-            buffer_capacity = 500_000
-            replay_alpha = 0.5
-            warmup = 2_000
-            n_step = 1
-        else:
-            epsilon = [(0, 1.0), (200_000, 0.20), (500_000, 0.10)]
-            buffer_capacity = 100_000
-            replay_alpha = 0.8
-            warmup = 300
-            n_step = 1
-        config = DQNConfig().training(
-            replay_buffer_config={
-                "enable_replay_buffer_api": True,
-                "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
-                "capacity": buffer_capacity,
-                "alpha": replay_alpha,
-                "beta": 0.4,
-            },
-            train_batch_size_per_learner=512,
-            num_steps_sampled_before_learning_starts=warmup,
-            epsilon=epsilon,
-            n_step=n_step,
-        )
-
-    if algorithm_name == "ppo":
-
-        if learns_validator:
-            entropy_coeff = 0.01                    
-        else:
-            entropy_coeff = [                       
-                (0, 0.2),
-                (200_000, 0.05),
-                (800_000, 0.005),
-            ]
-        config = PPOConfig().training(
-            entropy_coeff=entropy_coeff,
-            train_batch_size=512,
-        )
-
-    if algorithm_name == "sac":
-        if learns_validator:
-            initial_alpha = 0.2
-            warmup = 300
-            target_entropy = "auto"
-            n_step = 1
-        else:
-            initial_alpha = 0.2
-            warmup = 300
-            target_entropy = 0.35
-            n_step = 3
-        config = SACConfig().training(
-            replay_buffer_config={
-                "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
-                "capacity": 100_000,
-                "alpha": 0.8,
-                "beta": 0.4,
-            },
-            train_batch_size_per_learner=512,
-            num_steps_sampled_before_learning_starts=warmup,
-            initial_alpha=initial_alpha,
-            target_entropy=target_entropy,
-            n_step=n_step,
-        )
-
-    if config is None:
+    try:
+        builder = _ALGORITHM_CONFIG_BUILDERS[algorithm_name]
+    except KeyError:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")
-
-    return config.framework("torch")
-
-
-def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dict:
-    """Hyperparameter search space for Ray Tune autotune.
-    """
+    return builder(learns_validator).framework("torch")
 
 
-    n_step_choices = [1, 3]
-    if algorithm_name == "dqn":
-        if learns_validator:
-            epsilon_choices = [
+def _dqn_search_space(learns_validator: bool) -> dict:
+    if learns_validator:
+        return {
+            "lr": tune.loguniform(3e-5, 1.5e-4),
+            "gamma": tune.uniform(0.92, 0.965),
+            "target_network_update_freq": tune.choice([200, 500]),
+            "n_step": tune.choice([1, 3]),
+            "epsilon": tune.choice([
                 [(0, 1.0), (80_000, 0.10), (200_000, 0.02)],
                 [(0, 1.0), (120_000, 0.10), (230_000, 0.02)],
                 [(0, 1.0), (150_000, 0.15), (240_000, 0.03)],
-            ]
-
-            gamma = tune.uniform(0.92, 0.965)
-            lr = tune.loguniform(3e-5, 1.5e-4)
-            tnuf_choices = [200, 500]
-            n_step_local = n_step_choices
-        else:
-            lr_choices = [
-                [[0, 2.5e-4], [350_000, 8.0e-5]],
-                [[0, 2.0e-4], [400_000, 6.0e-5]],
-                [[0, 3.3e-4], [300_000, 1.0e-4]],
-            ]
-            epsilon_choices = [
-                [(0, 1.0), (200_000, 0.20), (500_000, 0.10)],
-                [(0, 1.0), (300_000, 0.20), (650_000, 0.05)],
-                [(0, 1.0), (250_000, 0.15), (550_000, 0.10)],
-            ]
-            gamma = tune.uniform(0.98, 0.99)
-            lr = tune.choice(lr_choices)
-            tnuf_choices = [500, 1000]
-            n_step_local = [1, 2, 3, 4]
-
-            def _buffer(capacity):
-                return {
-                    "enable_replay_buffer_api": True,
-                    "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
-                    "capacity": capacity,
-                    "alpha": 0.8,
-                    "beta": 0.4,
-                }
-
-            return {
-                "lr": lr,
-                "gamma": gamma,
-                "target_network_update_freq": tune.choice(tnuf_choices),
-                "n_step": tune.choice(n_step_local),
-                "epsilon": tune.choice(epsilon_choices),
-                "replay_buffer_config": tune.choice([_buffer(100_000), _buffer(250_000)]),
-            }
-        return {
-            "lr": lr,
-            "gamma": gamma,
-            "target_network_update_freq": tune.choice(tnuf_choices),
-            "n_step": tune.choice(n_step_local),
-            "epsilon": tune.choice(epsilon_choices),
+            ]),
         }
-    if algorithm_name == "ppo":
-        if learns_validator:
-            return {
-                "lr": tune.loguniform(2.5e-4, 3.5e-4),
-                "gamma": tune.uniform(0.94, 0.955),
-                "entropy_coeff": tune.uniform(0.004, 0.01),
-                "clip_param": tune.uniform(0.14, 0.2),
-                "num_epochs": tune.choice([10, 15]),
-            }
-        return {
-            "lr": tune.loguniform(1e-5, 1e-3),
-            "entropy_coeff": tune.uniform(0.05, 0.25),
-            "clip_param": tune.uniform(0.1, 0.4),
-            "num_epochs": tune.choice([10, 20, 30]),
-        }
-    if algorithm_name == "sac":
-        if learns_validator:
+    return {
+        "lr": tune.choice([
+            [[0, 2.5e-4], [350_000, 8.0e-5]],
+            [[0, 2.0e-4], [400_000, 6.0e-5]],
+            [[0, 3.3e-4], [300_000, 1.0e-4]],
+        ]),
+        "gamma": tune.uniform(0.99, 0.997),
+        "target_network_update_freq": tune.choice([500, 1000]),
+        "n_step": tune.choice([1, 2, 3]),
+        "epsilon": tune.choice([
+            [(0, 1.0), (200_000, 0.20), (500_000, 0.10)],
+            [(0, 1.0), (300_000, 0.20), (650_000, 0.05)],
+            [(0, 1.0), (250_000, 0.15), (550_000, 0.10)],
+        ]),
+        "replay_buffer_config": tune.choice([
+            _prioritized_episode_buffer(100_000, 0.8, enable_api=True),
+            _prioritized_episode_buffer(250_000, 0.8, enable_api=True),
+        ]),
+    }
 
-            return {
-                "actor_lr": tune.loguniform(1e-5, 1e-3),
-                "critic_lr": tune.loguniform(1e-5, 1e-3),
-                "alpha_lr": tune.loguniform(3e-4, 1e-2),
-                "tau": tune.uniform(0.001, 0.01),
-                "gamma": tune.uniform(0.95, 0.999),
-                "n_step": tune.choice(n_step_choices),
-                "initial_alpha": tune.uniform(0.2, 0.8),
-            }
+
+def _ppo_search_space(learns_validator: bool) -> dict:
+    if learns_validator:
         return {
-            "actor_lr": tune.loguniform(1e-4, 3e-4),
-            "critic_lr": tune.loguniform(1.5e-4, 3e-4),
-            "alpha_lr": tune.loguniform(5e-4, 4e-3),
-            "tau": tune.uniform(0.004, 0.007),
-            "gamma": tune.uniform(0.985, 0.995),
-            "n_step": tune.choice([1, 2, 3, 4]),
-            "initial_alpha": tune.uniform(0.1, 0.3),
-            "target_entropy": tune.uniform(0.2, 0.5),
+            "lr": tune.loguniform(2.5e-4, 3.5e-4),
+            "gamma": tune.uniform(0.94, 0.955),
+            "entropy_coeff": tune.uniform(0.004, 0.01),
+            "clip_param": tune.uniform(0.14, 0.2),
+            "num_epochs": tune.choice([10, 15]),
         }
-    raise ValueError(f"Unknown algorithm: {algorithm_name}")
+    return {
+        "lr": tune.loguniform(1e-5, 1e-3),
+        "entropy_coeff": tune.uniform(0.05, 0.25),
+        "clip_param": tune.uniform(0.1, 0.4),
+        "num_epochs": tune.choice([10, 20, 30]),
+    }
+
+
+def _sac_search_space(learns_validator: bool) -> dict:
+    if learns_validator:
+        return {
+            "actor_lr": tune.loguniform(1e-5, 1e-3),
+            "critic_lr": tune.loguniform(1e-5, 1e-3),
+            "alpha_lr": tune.loguniform(3e-4, 1e-2),
+            "tau": tune.uniform(0.001, 0.01),
+            "gamma": tune.uniform(0.95, 0.999),
+            "n_step": tune.choice([1, 3]),
+            "initial_alpha": tune.uniform(0.2, 0.8),
+        }
+    return {
+        "actor_lr": tune.loguniform(1e-5, 1e-3),
+        "critic_lr": tune.loguniform(1e-5, 1e-3),
+        "alpha_lr": tune.loguniform(3e-4, 1e-2),
+        "tau": tune.uniform(0.001, 0.01),
+        "gamma": tune.uniform(0.99, 0.997),
+        "n_step": tune.choice([1, 2, 3]),
+        "initial_alpha": tune.uniform(0.1, 0.3),
+        "target_entropy": tune.uniform(0.2, 0.5),
+        "replay_buffer_config": tune.choice([
+            _prioritized_episode_buffer(100_000, 0.8),
+            _prioritized_episode_buffer(250_000, 0.8),
+        ]),
+    }
+
+
+_SEARCH_SPACE_BUILDERS = {
+    "dqn": _dqn_search_space,
+    "ppo": _ppo_search_space,
+    "sac": _sac_search_space,
+}
+
+
+def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dict:
+    """Hyperparameter search space for Ray Tune autotune."""
+    try:
+        builder = _SEARCH_SPACE_BUILDERS[algorithm_name]
+    except KeyError:
+        raise ValueError(f"Unknown algorithm: {algorithm_name}")
+    return builder(learns_validator)
 
 
 def add_env_config(config: AlgorithmConfig) -> AlgorithmConfig:
