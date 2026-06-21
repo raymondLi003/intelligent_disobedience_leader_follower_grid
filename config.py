@@ -123,13 +123,9 @@ def _dqn_search_space(learns_validator: bool) -> dict:
             ]),
         }
     return {
-        "lr": tune.choice([
-            [[0, 2.5e-4], [350_000, 8.0e-5]],
-            [[0, 2.0e-4], [400_000, 6.0e-5]],
-            [[0, 3.3e-4], [300_000, 1.0e-4]],
-        ]),
-        "gamma": tune.uniform(0.99, 0.997),
-        "target_network_update_freq": tune.choice([500, 1000]),
+        "lr": tune.loguniform(3e-5, 1.5e-4),
+        "gamma": tune.uniform(0.92, 0.965),
+        "target_network_update_freq": tune.choice([200, 500]),
         "n_step": tune.choice([1, 2, 3]),
         "epsilon": tune.choice([
             [(0, 1.0), (200_000, 0.20), (500_000, 0.10)],
