@@ -126,7 +126,7 @@ def _dqn_search_space(learns_validator: bool) -> dict:
         "lr": tune.loguniform(3e-5, 1.5e-4),
         "gamma": tune.uniform(0.92, 0.965),
         "target_network_update_freq": tune.choice([200, 500]),
-        "n_step": 1,
+        "n_step": tune.choice([2, 3, 4]),
         "epsilon": tune.choice([
             [(0, 1.0), (200_000, 0.20), (500_000, 0.10)],
             [(0, 1.0), (300_000, 0.20), (650_000, 0.05)],
@@ -173,7 +173,7 @@ def _sac_search_space(learns_validator: bool) -> dict:
         "alpha_lr": tune.loguniform(3e-4, 1e-2),
         "tau": tune.uniform(0.001, 0.01),
         "gamma": tune.uniform(0.99, 0.997),
-        "n_step": 1,
+        "n_step": tune.choice([2, 3, 4]),
         "initial_alpha": tune.uniform(0.1, 0.3),
         "target_entropy": tune.uniform(0.2, 0.5),
         "replay_buffer_config": tune.choice([
