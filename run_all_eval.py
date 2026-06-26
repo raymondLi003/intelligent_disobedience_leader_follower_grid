@@ -26,7 +26,11 @@ from eval_common import (
     resolve_variations,
     run_pairing,
 )
-from llm_validator_no_strat import LLMValidatorNoStrat
+from llm_validator_no_strat import (
+    LLMValidatorNoStrat,
+    LLMValidatorNoStratRewardFramed,
+    LLMValidatorNoStratRulebook,
+)
 from ray.rllib.examples.rl_modules.classes.random_rlm import RandomRLModule
 from utils import AGENT_CONFIGS, LOG_DIR, ProposerPolicies, ValidatorPolicies, GRID_SIZE, NUM_LAVA_TILES
 
@@ -38,12 +42,18 @@ LLM_MODELS = [
     ("gemini_2_5_flash", "gemini-2.5-flash"),
 ]
 
+LLM_VARIANTS = [
+    ("", LLMValidatorNoStrat),
+    ("__reward_framed", LLMValidatorNoStratRewardFramed),
+    ("__rulebook", LLMValidatorNoStratRulebook),
+]
 
-def _make_llm_validator_class(model_name: str) -> type:
-    """Build a subclass of LLMValidatorNoStrat pinned to a specific LLM model."""
+
+def _make_llm_validator_class(base: type, model_name: str) -> type:
+    """Build a subclass of `base` pinned to a specific LLM model."""
     return type(
-        f"LLMValidator_{model_name}",
-        (LLMValidatorNoStrat,),
+        f"{base.__name__}_{model_name}",
+        (base,),
         {"MODEL_NAME": model_name},
     )
 
@@ -103,13 +113,17 @@ def main():
             v_factory = load_checkpoint_factory(exp_name, ac_algo.validator_policy)
             pairings.append((shortcut_name, p_factory, v_factory))
 
-    # LLM validator paired with the perfect (BFS) proposer, one entry per model.
-    # Uses subclasses so each model writes its own log file and the eval table
-    for display_name, model_name in LLM_MODELS:
-        validator_class = _make_llm_validator_class(model_name)
-        # bind both vars as defaults so the lambda closure captures the right one
-        llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
-        pairings.append((f"perfect_x_llm_{display_name}", perfect_proposer_factory, llm_factory))
+    # LLM validators paired with the perfect (BFS) proposer
+    for variant_suffix, base_cls in LLM_VARIANTS:
+        for display_name, model_name in LLM_MODELS:
+            validator_class = _make_llm_validator_class(base_cls, model_name)
+            # bind vars as defaults so each lambda closure captures the right class
+            llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
+            pairings.append((
+                f"perfect_x_llm_{display_name}{variant_suffix}",
+                perfect_proposer_factory,
+                llm_factory,
+            ))
 
     if args.only:
         needles = [s.strip() for s in args.only.split(",") if s.strip()]

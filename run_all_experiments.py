@@ -275,8 +275,11 @@ def _select_by_true_eval(full_length: list, metric: str):
     return best, best_ckpt, best_goal
 
 
-def train_one(agent_config: AgentConfig, iters: int, samples: int) -> dict:
+def train_one(agent_config: AgentConfig, iters: int, samples: int, seed: int | None = None) -> dict:
     config = create_rllib_config(agent_config)
+    if seed is not None:
+        # run thru the seedings to check the robustness
+        config = config.debugging(seed=seed)
     callbacks = [ActionLoggerCallback]
     if _can_true_eval(agent_config):
         config = _add_evaluation(config)
@@ -413,6 +416,12 @@ def main():
              "the search space is defined in config.get_search_space, with ASHA scheduler for early stopping"
 
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="seed the whole sweep",
+    )
     args = parser.parse_args()
 
     ray.init(ignore_reinit_error=True)
@@ -466,7 +475,7 @@ def main():
         print(f"\n{'=' * 78}")
         print(f">>> [{i}/{len(agent_configs)}] Training: {experiment_name(agent_config)}")
         print(f"{'=' * 78}\n")
-        summary.append(train_one(agent_config, args.iters, args.samples))
+        summary.append(train_one(agent_config, args.iters, args.samples, seed=args.seed))
 
     # make sure each run only writes to the experiments it has run
     # so that it does not mess up the merges
@@ -474,6 +483,9 @@ def main():
         suffix = "_" + "_".join(s.strip() for s in args.only.split(",") if s.strip())
     else:
         suffix = ""
+    if args.seed is not None:
+        # Keep robustness-check runs from overwriting each other or the main summary.
+        suffix += f"_seed{args.seed}"
     out = LOG_DIR / "tune" / f"all_experiments_summary{suffix}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 

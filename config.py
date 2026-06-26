@@ -123,14 +123,14 @@ def _dqn_search_space(learns_validator: bool) -> dict:
             ]),
         }
     return {
-        "lr": tune.loguniform(3e-5, 1.5e-4),
-        "gamma": tune.uniform(0.92, 0.965),
-        "target_network_update_freq": tune.choice([200, 500]),
-        "n_step": tune.choice([2, 3, 4]),
+        "lr": tune.loguniform(1.5e-4, 4e-4),
+        "gamma": tune.uniform(0.98, 0.995),
+        "target_network_update_freq": tune.choice([100, 500]),
+        "n_step": tune.choice([1, 2]),
         "epsilon": tune.choice([
-            [(0, 1.0), (200_000, 0.20), (500_000, 0.10)],
-            [(0, 1.0), (300_000, 0.20), (650_000, 0.05)],
-            [(0, 1.0), (250_000, 0.15), (550_000, 0.10)],
+            [(0, 1.0), (100_000, 0.15), (250_000, 0.05)],
+            [(0, 1.0), (250_000, 0.15), (550_000, 0.12)],
+            [(0, 1.0), (180_000, 0.15), (400_000, 0.08)],
         ]),
         "replay_buffer_config": tune.choice([
             _prioritized_episode_buffer(100_000, 0.8, enable_api=True),
@@ -149,10 +149,10 @@ def _ppo_search_space(learns_validator: bool) -> dict:
             "num_epochs": tune.choice([10, 15]),
         }
     return {
-        "lr": tune.loguniform(1e-5, 1e-3),
-        "entropy_coeff": tune.uniform(0.05, 0.25),
-        "clip_param": tune.uniform(0.1, 0.4),
-        "num_epochs": tune.choice([10, 20, 30]),
+        "lr": tune.loguniform(8e-5, 3e-4),
+        "entropy_coeff": tune.uniform(0.005, 0.03),
+        "clip_param": tune.uniform(0.25, 0.4),
+        "num_epochs": tune.choice([20, 30]),
     }
 
 
@@ -168,14 +168,14 @@ def _sac_search_space(learns_validator: bool) -> dict:
             "initial_alpha": tune.uniform(0.2, 0.8),
         }
     return {
-        "actor_lr": tune.loguniform(1e-5, 1e-3),
-        "critic_lr": tune.loguniform(1e-5, 1e-3),
-        "alpha_lr": tune.loguniform(3e-4, 1e-2),
-        "tau": tune.uniform(0.001, 0.01),
+        "actor_lr": tune.loguniform(1e-4, 5e-4),
+        "critic_lr": tune.loguniform(8e-5, 4e-4),
+        "alpha_lr": tune.loguniform(1e-3, 6e-3),
+        "tau": tune.uniform(0.003, 0.009),
         "gamma": tune.uniform(0.99, 0.997),
-        "n_step": tune.choice([2, 3, 4]),
-        "initial_alpha": tune.uniform(0.1, 0.3),
-        "target_entropy": tune.uniform(0.2, 0.5),
+        "n_step": tune.choice([1, 2]),
+        "initial_alpha": tune.uniform(0.2, 0.4),
+        "target_entropy": tune.uniform(0.2, 0.4),
         "replay_buffer_config": tune.choice([
             _prioritized_episode_buffer(100_000, 0.8),
             _prioritized_episode_buffer(250_000, 0.8),

@@ -144,12 +144,16 @@ def run_pairing(
     variations: list,
     video_dir: Path | str = "videos",
     save_video: bool = True,
+    render: bool = True,
 ) -> dict:
-    """Run a (proposer, validator) pairing across the given lava configurations."""
+    """Run a (proposer, validator) pairing across the given lava configurations.
+
+    render=False to skip pygame so that we can avoid rendering and save time
+    """
     env = GridWorldEnv(
         size=GRID_SIZE,
-        render=True,
-        record_render=True,
+        render=render,
+        record_render=render,
         # put a reasonable upper bound on steps to prevent infinite loops in case of agent running in circles
         max_steps=128,
         single_agent=False,
@@ -235,7 +239,7 @@ def run_pairing(
         result["llm_calls"] = int(validator_module._call_count)
         result["llm_cache_hits"] = int(validator_module._cache_hits)
 
-    if save_video:
+    if save_video and render:
         video_dir_path = Path(video_dir)
         video_dir_path.mkdir(parents=True, exist_ok=True)
         video_path = video_dir_path / f"{name}.mp4"
