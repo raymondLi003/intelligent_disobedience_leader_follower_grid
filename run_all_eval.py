@@ -28,7 +28,6 @@ from eval_common import (
 )
 from llm_validator_no_strat import (
     LLMValidatorNoStrat,
-    LLMValidatorNoStratRewardFramed,
     LLMValidatorNoStratRulebook,
 )
 from ray.rllib.examples.rl_modules.classes.random_rlm import RandomRLModule
@@ -36,15 +35,37 @@ from utils import AGENT_CONFIGS, LOG_DIR, ProposerPolicies, ValidatorPolicies, G
 
 
 
-LLM_MODELS = [
-    ("claude_haiku", "us.anthropic.claude-3-haiku-20240307-v1:0"),
-    ("gpt_4o_mini", "4o-mini"),
-    ("gemini_2_5_flash", "gemini-2.5-flash"),
-]
+# level 1 to level 3 in terms of model advance level
+LLM_LEVELS = {
+    1: [
+        ("l1_claude_haiku3", "us.anthropic.claude-3-haiku-20240307-v1:0"),
+        ("l1_gpt_4o_mini", "4o-mini"),
+        ("l1_gemini_flash_lite", "gemini-2.5-flash-lite"),
+    ],
+    2: [
+        ("l2_claude_haiku45", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+        ("l2_gpt_5_mini", "gpt-5-mini"),
+        ("l2_gemini_flash", "gemini-2.5-flash"),
+    ],
+    3: [
+        ("l3_claude_opus45", "us.anthropic.claude-opus-4-5-20251101-v1:0"),
+        ("l3_gpt_5_2", "gpt-5.2"),
+        ("l3_gemini_pro", "gemini-2.5-pro"),
+    ],
+}
+
+
+def select_llm_models(levels: list[int]) -> list[tuple[str, str]]:
+    """Flatten the requested complexity levels into (display_name, model_name) pairs."""
+    models = []
+    for lvl in levels:
+        if lvl not in LLM_LEVELS:
+            raise ValueError(f"Unknown LLM level {lvl}; choose from {sorted(LLM_LEVELS)}")
+        models.extend(LLM_LEVELS[lvl])
+    return models
 
 LLM_VARIANTS = [
     ("", LLMValidatorNoStrat),
-    ("__reward_framed", LLMValidatorNoStratRewardFramed),
     ("__rulebook", LLMValidatorNoStratRulebook),
 ]
 
@@ -91,7 +112,18 @@ def main():
         help="comma-separated substrings; only run pairings whose name matches one. "
              "e.g. --only ppo_perfect_proposer_x_learned_validator",
     )
+    parser.add_argument(
+        "--llm-levels",
+        type=str,
+        default="1,2,3",
+        help="comma-separated LLM complexity levels to eval (1=rudimentary, 2=mid, "
+             "3=frontier). e.g. --llm-levels 1 or --llm-levels 1,3",
+    )
     args = parser.parse_args()
+
+    llm_levels = [int(x) for x in args.llm_levels.split(",") if x.strip()]
+    llm_models = select_llm_models(llm_levels)
+    print(f"LLM levels {llm_levels} -> {len(llm_models)} model(s): {[m[0] for m in llm_models]}")
 
     ray.init(ignore_reinit_error=True)
     register_env("env", lambda _: GridWorldEnv(GRID_SIZE, num_lava_tiles=NUM_LAVA_TILES, single_agent=False))
@@ -115,7 +147,7 @@ def main():
 
     # LLM validators paired with the perfect (BFS) proposer
     for variant_suffix, base_cls in LLM_VARIANTS:
-        for display_name, model_name in LLM_MODELS:
+        for display_name, model_name in llm_models:
             validator_class = _make_llm_validator_class(base_cls, model_name)
             # bind vars as defaults so each lambda closure captures the right class
             llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)

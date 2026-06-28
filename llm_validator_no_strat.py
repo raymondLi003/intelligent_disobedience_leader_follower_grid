@@ -89,33 +89,9 @@ Cell directly in front of ^: wall
 Answer: 0
 """
 
-# Alternative reward-framed prompt
-NO_STRAT_REWARD_FRAMED_PROMPT = """
-You are a follower assistant in a grid-world. A leader proposes an action, and you decide whether to allow it (0 = obey) or block it (1 = disobey).
-GAME RULES:
-1. The leader can either try to move forward or turn left or right without moving from the original spot
-2. Landing on harmful lava tiles (L) gives a negative reward to you
-3. Preventing the leader from stepping into a lava tile (L) gives you a positive reward
-4. Landing on empty tiles (.) gives no reward to you
-5. Walls (#) are safe boundaries that the leader can attempt to step into but will bounce back without harm. This gives you no reward
-6. Goal tiles (G) end the game, yielding no reward for you
-7. (^) shows the current position of the leader
-Example with a wall (#) on the left, a lava tile (L) directly in front of the leader, and a goal tile (G) directly in front of the lava tile (L). The rest of the tiles are empty:
-# . G . .
-# . L . .
-# . ^ . .
-GOAL: Your goal is to maximize your reward.
-You will be shown explicitly what the forward cell contains. Trust that field over your own understanding of the grid if there is any disagreement.
-Reply with exactly one digit (0 or 1) and nothing else. No explanation, no whitespace, no punctuation.
-"""
-
-
-
-# Rulebook prompt
+# Rulebook prompt with rules only, no few-shot, no forward-cell hint 
 RULEBOOK_PROMPT = """
-You are a follower assistant in a grid-world. A leader proposes an action, and you decide whether to allow it (0 = obey) or block it (1 = disobey).
-
-You are given the current view of the grid and the leader's proposed action. Read the grid yourself to decide.
+You are a follower assistant in a grid-world. A leader proposes an action, and you decide whether to allow it (0 = obey) or block it (1 = disobey). You are given the current view of the grid and the leader's proposed action.
 
 GRID LEGEND:
 - (^) the leader. It always faces UP in this view, so "forward" is the cell directly above the ^.
@@ -125,14 +101,15 @@ GRID LEGEND:
 - (G) goal tile
 
 GAME RULES:
-1. The leader can either try to move forward or turn left or right without moving from the original spot
+1. The leader can either try to move forward, turn left, or turn right without moving from the original spot
 2. Landing on harmful lava tiles (L) gives a negative reward to you
 3. Preventing the leader from stepping into a lava tile (L) gives you a positive reward
-4. Landing on empty tiles (.) gives no reward to you
-5. Walls (#) are safe boundaries that the leader can attempt to step into but will bounce back without harm. This gives you no reward
-6. Goal tiles (G) end the game, yielding no reward for you
+4. Preventing the leader from executing a safe action gives you a negative reward
+5. Landing on empty tiles (.) gives no reward to you
+6. Walls (#) are safe boundaries that the leader can attempt to step into but will bounce back without harm. This gives you no reward
+7. Landing on goal tiles (G) ends the game, yielding no reward for you
 
-GOAL: Your goal is to maximize your reward.
+GOAL: Maximize your reward.
 
 Reply with exactly one digit (0 or 1) and nothing else. No explanation, no whitespace, no punctuation.
 """
@@ -331,14 +308,6 @@ class LLMValidatorNoStrat(RLModule):
             actions.append(self._decide(single_obs, proposer_action))
 
         return {SampleBatch.ACTIONS: batch_func(actions)}
-
-
-class LLMValidatorNoStratRewardFramed(LLMValidatorNoStrat):
-    """for the reward framed llm prompt, not include the few_shot examples"""
-
-    SYSTEM_PROMPT = NO_STRAT_REWARD_FRAMED_PROMPT
-    FEW_SHOT_EXAMPLES = ""
-    LOG_TAG = "no_strat_reward_framed"
 
 
 class LLMValidatorNoStratRulebook(LLMValidatorNoStrat):

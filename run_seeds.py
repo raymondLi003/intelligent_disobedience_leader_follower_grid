@@ -124,7 +124,8 @@ def _eval_factories(ac: AgentConfig, algo):
 
 
 def _primary_metric(ac: AgentConfig) -> str:
-    return "goal_pct" if ac.proposer_policy == ProposerPolicies.LEARNED else "validator_mean_reward"
+    # Goal-reach % for both learned prop and val
+    return "goal_pct"
 
 
 def _retrain_and_eval(ac: AgentConfig, final_params: dict, seed: int, iters: int,
