@@ -26,10 +26,7 @@ from eval_common import (
     resolve_variations,
     run_pairing,
 )
-from llm_validator_no_strat import (
-    LLMValidatorNoStrat,
-    LLMValidatorNoStratRulebook,
-)
+from llm_validator_no_strat import LLMValidatorNoStrat
 from ray.rllib.examples.rl_modules.classes.random_rlm import RandomRLModule
 from utils import AGENT_CONFIGS, LOG_DIR, ProposerPolicies, ValidatorPolicies, GRID_SIZE, NUM_LAVA_TILES
 
@@ -63,12 +60,6 @@ def select_llm_models(levels: list[int]) -> list[tuple[str, str]]:
             raise ValueError(f"Unknown LLM level {lvl}; choose from {sorted(LLM_LEVELS)}")
         models.extend(LLM_LEVELS[lvl])
     return models
-
-LLM_VARIANTS = [
-    ("", LLMValidatorNoStrat),
-    ("__rulebook", LLMValidatorNoStratRulebook),
-]
-
 
 def _make_llm_validator_class(base: type, model_name: str) -> type:
     """Build a subclass of `base` pinned to a specific LLM model."""
@@ -146,16 +137,15 @@ def main():
             pairings.append((shortcut_name, p_factory, v_factory))
 
     # LLM validators paired with the perfect (BFS) proposer
-    for variant_suffix, base_cls in LLM_VARIANTS:
-        for display_name, model_name in llm_models:
-            validator_class = _make_llm_validator_class(base_cls, model_name)
-            # bind vars as defaults so each lambda closure captures the right class
-            llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
-            pairings.append((
-                f"perfect_x_llm_{display_name}{variant_suffix}",
-                perfect_proposer_factory,
-                llm_factory,
-            ))
+    for display_name, model_name in llm_models:
+        validator_class = _make_llm_validator_class(LLMValidatorNoStrat, model_name)
+        # bind vars as defaults so each lambda captures the right class
+        llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
+        pairings.append((
+            f"perfect_x_llm_{display_name}",
+            perfect_proposer_factory,
+            llm_factory,
+        ))
 
     if args.only:
         needles = [s.strip() for s in args.only.split(",") if s.strip()]

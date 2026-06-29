@@ -1,5 +1,5 @@
 """
-LLM validator Module for IDG grid world environment. 
+wLLM validator Module for IDG grid world environment.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ _REPO_ROOT = Path(__file__).resolve().parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from env import ProposerAction, ValidatorAction 
+from env import ProposerAction, ValidatorAction
 
 from llmproxy import LLMProxy
 
@@ -26,70 +26,7 @@ from llmproxy import LLMProxy
 MODEL_NAME = "us.anthropic.claude-3-haiku-20240307-v1:0"
 
 
-# Original no-strat prompt with few shot examples
-SYSTEM_PROMPT = """
-You are a safety validator in a grid-world. A leader proposes an action and you decide whether to allow it (0 = obey) or block it (1 = disobey).
-GAME RULES:
-1. If the action is `turn_left` or `turn_right`, the leader stays in its current tile. Turns NEVER move the agent, so they cannot step onto anything. Lava in the view is IRRELEVANT for turns.
-2. There are harmful lava tiles (L), landing on this tile ends the game in a loss
-3. Empty tiles (.) where the leader can safely step on
-4. Walls (#) are safe boundaries that the leader can attempt to step into but will just bounce back without harm.
-5. There is a single Goal tile (G) which wins the game
-GOAL:
-Your goal is to guide the leader to the Goal tile to win without stepping on the Lava tiles.
-
-You will be shown explicitly what the forward cell contains. Trust that field over your own understanding of the grid if there is any disagreement.
-
-Reply with exactly one digit (0 or 1) and nothing else. No explanation, no whitespace, no punctuation.
-"""
-
-_FEW_SHOT_EXAMPLES = """Example 1 (forward into empty -> obey):
-View:
-. . . . .
-. . . . .
-L L ^ . .
-Action: forward
-Cell directly in front of ^: empty
-Answer: 0
-
-Example 2 (forward into lava -> disobey):
-View:
-. . . . .
-. . . . .
-L L ^ L .
-Action: forward
-Cell directly in front of ^: lava
-Answer: 1
-
-Example 3 (turn with lava nearby -> obey, turns are always safe):
-View:
-. . G . .
-. . L . .
-. . ^ . .
-Action: turn_left
-Cell directly in front of ^: lava
-Answer: 0
-
-Example 4 (forward into goal -> obey):
-View:
-. . G . .
-. . ^ . .
-. . . . .
-Action: forward
-Cell directly in front of ^: goal
-Answer: 0
-
-Example 5 (forward into wall -> obey, walls are safe boundaries):
-View:
-. . . . .
-. . # . .
-. L ^ L .
-Action: forward
-Cell directly in front of ^: wall
-Answer: 0
-"""
-
-# Rulebook prompt with rules only, no few-shot, no forward-cell hint 
+# Rulebook prompt with rules only, no few-shot, no forward-cell hint
 RULEBOOK_PROMPT = """
 You are a follower assistant in a grid-world. A leader proposes an action, and you decide whether to allow it (0 = obey) or block it (1 = disobey). You are given the current view of the grid and the leader's proposed action.
 
@@ -130,8 +67,8 @@ def _slugify(model_name: str) -> str:
 def _render_egocentric(env_obs: torch.Tensor) -> str:
     """
     Render the validator's egocentric observation as ASCII.
-    
-    Setups: 
+
+    Setups:
     0 = walls, 1 = agent, 2 = goal, 3 = lava. The agent always faces UP in this view, sitting at the bottom-center cell.
     """
     # Convert the observation to a numpy array if it's a torch tensor
@@ -154,45 +91,14 @@ def _render_egocentric(env_obs: torch.Tensor) -> str:
         rows.append(" ".join(row_chars))
     return "\n".join(rows)
 
-def _forward_cell_label(env_obs) -> str:    
-    """
-    Determine the label of the cell directly in front of the agent (the cell immediately above ^ in the view).
-    return: one of "empty", "goal", "wall", "lava" 
-    """
-    
-    arr = env_obs.detach().cpu().numpy() if hasattr(env_obs, "detach") else env_obs
-    h, w, _ = arr.shape
-    agent_row, agent_col = h- 1, w//2  # Agent is always at the bottom-center
-    forward_row, forward_col = agent_row - 1, agent_col  # Cell directly in front of the agent
-    if forward_row < 0:
-        return "off_grid"
-    cell = arr[forward_row, forward_col]
-    if cell[3] > 0.5:
-        return "lava"
-    elif cell[0] > 0.5:
-        return "wall"
-    elif cell[2] > 0.5:
-        return "goal"
-    return "empty"
 
-
-def _build_query(system_prompt: str, few_shot: str, grid_ascii: str,
-                 proposer_action: int, forward_cell: str,
-                 include_forward_cell: bool = True) -> str:
-    """
-    Build the query string for the LLM prompt
-    so that we can choose if we want include the forward_cell hint or the few_shot examples
-    """
-
+def _build_query(system_prompt: str, grid_ascii: str, proposer_action: int) -> str:
+    """Build the query string for the LLM prompt (rulebook only)."""
     action_name = _PROPOSER_ACTION_NAMES.get(proposer_action, f"unknown_{proposer_action}")
-    query = f"{system_prompt}\n\n"
-    if few_shot:
-        query += f"{few_shot}\n\n"
-    query += f"Current situation:\nView:\n{grid_ascii}\nAction: {action_name}\n"
-    if include_forward_cell:
-        query += f"Cell directly in front of ^: {forward_cell}\n"
-    query += "Answer:"
-    return query
+    return (
+        f"{system_prompt}\n\n"
+        f"Current situation:\nView:\n{grid_ascii}\nAction: {action_name}\nAnswer:"
+    )
 
 def _parse_response(result_text: str) -> int:
     """
@@ -206,20 +112,14 @@ def _parse_response(result_text: str) -> int:
     raise ValueError(f"No 0/1 digit in LLM response: {result_text!r}")
 
 class LLMValidatorNoStrat(RLModule):
-    """Validator policy that uses an LLM to
-    decide whether to block or allow the leader's proposed action
-    based on the validator's egocentric view of the grid
-    and the content of the cell directly in front of the agent.
-
-    Subclass and override MODEL_NAME to use a different LLM (GPT, Gemini, ...).
-    The Tufts LLMProxy routes to whichever backend matches the model string."""
+    """Validator policy that uses an LLM to decide whether to block or allow the
+    leader's proposed action, with only the rulebook prompt and the validator's
+    egocentric view of the grid """
 
     # Override in subclasses to swap models without touching call sites.
     MODEL_NAME: str = MODEL_NAME
-    SYSTEM_PROMPT: str = SYSTEM_PROMPT
-    FEW_SHOT_EXAMPLES: str = _FEW_SHOT_EXAMPLES
+    SYSTEM_PROMPT: str = RULEBOOK_PROMPT
     LOG_TAG: str = "no_strat"
-    INCLUDE_FORWARD_CELL: bool = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -229,12 +129,12 @@ class LLMValidatorNoStrat(RLModule):
         self._cache_hits = 0
         # make sure the results do not overwrite each other
         self._log_path = _LOG_DIR / f"llm_eval_{self.LOG_TAG}__{_slugify(self.MODEL_NAME)}.jsonl"
-        
+
     def _ensure_proxy(self) -> LLMProxy:
         if self._proxy is None:
             self._proxy = LLMProxy()
         return self._proxy
-    
+
     def _decide(self, single_obs:torch.Tensor, proposer_action: int) -> int:
         obs_arr = single_obs.detach().cpu().numpy() if hasattr(single_obs, "detach") else single_obs
         # Cache key based on the raw observation bytes and proposed action
@@ -242,12 +142,9 @@ class LLMValidatorNoStrat(RLModule):
         if cache_key in self._cache:
             self._cache_hits += 1
             return self._cache[cache_key]
-        
+
         grid_ascii = _render_egocentric(single_obs)
-        forward_cell = _forward_cell_label(single_obs)
-        query = _build_query(self.SYSTEM_PROMPT, self.FEW_SHOT_EXAMPLES,
-                             grid_ascii, proposer_action, forward_cell,
-                             include_forward_cell=self.INCLUDE_FORWARD_CELL)
+        query = _build_query(self.SYSTEM_PROMPT, grid_ascii, proposer_action)
 
         proxy = self._ensure_proxy()
         self._call_count += 1
@@ -259,7 +156,7 @@ class LLMValidatorNoStrat(RLModule):
             temperature=0.0,
             session_id=f"llm-validator-{self.LOG_TAG}-{_slugify(self.MODEL_NAME)}-{self._call_count}",
         )
-        
+
         if not isinstance(response, dict) or "error" in response:
             print(f"[llm_validator] proxy error, defaulting to obey: {response}")
             decision = ValidatorAction.obey.value
@@ -273,7 +170,7 @@ class LLMValidatorNoStrat(RLModule):
                 decision = ValidatorAction.obey.value
         # Cache the decision
         self._cache[cache_key] = decision
-        
+
         # Log the call details for analysis (per-model log file)
         try:
             with self._log_path.open("a") as f:
@@ -288,8 +185,8 @@ class LLMValidatorNoStrat(RLModule):
         except OSError:
             pass
         return decision
-    
-    
+
+
     @override(RLModule)
     def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """For each observation in the batch, query the LLM to get a validator decision."""
@@ -298,7 +195,7 @@ class LLMValidatorNoStrat(RLModule):
         proposer_one_hot = batch[SampleBatch.OBS]["proposer_action"]
         # collapse one-hot to get action IDs
         proposer_action_ids = torch.argmax(proposer_one_hot, dim=-1)
-        
+
         batch_size = len(env_obs)
         actions = []
         # Process each observation in the batch
@@ -308,17 +205,3 @@ class LLMValidatorNoStrat(RLModule):
             actions.append(self._decide(single_obs, proposer_action))
 
         return {SampleBatch.ACTIONS: batch_func(actions)}
-
-
-class LLMValidatorNoStratRulebook(LLMValidatorNoStrat):
-    """
-    only include the rules in the prompt and no few shot examples or no forward cells
-    """
-
-    SYSTEM_PROMPT = RULEBOOK_PROMPT
-    FEW_SHOT_EXAMPLES = ""
-    INCLUDE_FORWARD_CELL = False
-    LOG_TAG = "no_strat_rulebook"
-        
-        
-        
