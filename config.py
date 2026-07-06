@@ -1,3 +1,4 @@
+import copy
 from functools import partial
 from typing import Hashable
 
@@ -23,127 +24,175 @@ from utils import (
     DEFAULT_SINGLE_AGENT_CONV_MODEL_CONFIG, CATALOG_CLASS, )
 
 
+
+DQN_PROPOSER_MODEL_CONFIG = copy.deepcopy(DEFAULT_MULTI_AGENT_MODEL_CONFIG)
+DQN_PROPOSER_MODEL_CONFIG["head_fcnet_hiddens"] = [256, 128]
+
+
+def _prioritized_episode_buffer(capacity: int, alpha: float, beta: float = 0.4,
+                                enable_api: bool = False) -> dict:
+    """Prioritized multi-agent episode replay buffer config shared by DQN and SAC."""
+    cfg = {}
+    if enable_api:
+        cfg["enable_replay_buffer_api"] = True
+    cfg.update({
+        "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
+        "capacity": capacity,
+        "alpha": alpha,
+        "beta": beta,
+    })
+    return cfg
+
+
+def _dqn_algorithm_config(learns_validator: bool) -> AlgorithmConfig:
+    if learns_validator:
+        epsilon = [(0, 1.0), (10_000, 0.05)]
+        buffer_capacity = 500_000
+        replay_alpha = 0.5
+        warmup = 2_000
+    else:
+        epsilon = [(0, 1.0), (10_000, 0.05)]
+        buffer_capacity = 500_000
+        replay_alpha = 0.5
+        warmup = 2_000
+    return DQNConfig().training(
+        replay_buffer_config=_prioritized_episode_buffer(
+            buffer_capacity, replay_alpha, enable_api=True),
+        train_batch_size_per_learner=512,
+        num_steps_sampled_before_learning_starts=warmup,
+        epsilon=epsilon,
+        n_step=1,
+    )
+
+
+def _ppo_algorithm_config(learns_validator: bool) -> AlgorithmConfig:
+    if learns_validator:
+        entropy_coeff = 0.01
+    else:
+        entropy_coeff = [
+            (0, 0.2),
+            (200_000, 0.05),
+            (800_000, 0.005),
+        ]
+    return PPOConfig().training(entropy_coeff=entropy_coeff, train_batch_size=512)
+
+
+def _sac_algorithm_config(learns_validator: bool) -> AlgorithmConfig:
+    if learns_validator:
+        target_entropy = "auto"
+        n_step = 1
+    else:
+        target_entropy = "auto"
+        n_step = 1
+    return SACConfig().training(
+        replay_buffer_config=_prioritized_episode_buffer(100_000, 0.8),
+        train_batch_size_per_learner=512,
+        num_steps_sampled_before_learning_starts=300,
+        initial_alpha=0.2,
+        target_entropy=target_entropy,
+        n_step=n_step,
+    )
+
+
+_ALGORITHM_CONFIG_BUILDERS = {
+    "dqn": _dqn_algorithm_config,
+    "ppo": _ppo_algorithm_config,
+    "sac": _sac_algorithm_config,
+}
+
+
 def create_algorithm_config(algorithm_name: str, learns_validator: bool = False) -> AlgorithmConfig:
-
-    config = None
-    if algorithm_name == "dqn":
-        if learns_validator:
-            epsilon = [(0, 1.0), (10_000, 0.05)]
-
-            buffer_capacity = 500_000
-        else:
-            epsilon = [(0, 1.0), (10_000, 0.05)]  
-            buffer_capacity = 100_000
-        config = DQNConfig().training(
-            replay_buffer_config={
-                "enable_replay_buffer_api": True,
-                "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
-                "capacity": buffer_capacity,
-                "alpha": 0.8,
-                "beta": 0.4,
-            },
-            train_batch_size_per_learner=512,
-            num_steps_sampled_before_learning_starts=300,
-            epsilon=epsilon,
-        )
-
-    if algorithm_name == "ppo":
-
-        if learns_validator:
-            entropy_coeff = 0.01                    
-        else:
-            entropy_coeff = [                       
-                (0, 0.2),
-                (200_000, 0.05),
-                (800_000, 0.005),
-            ]
-        config = PPOConfig().training(
-            entropy_coeff=entropy_coeff,
-            train_batch_size=512,
-        )
-
-    if algorithm_name == "sac":
-        initial_alpha = 0.2 if learns_validator else 0.05
-        config = SACConfig().training(
-            replay_buffer_config={
-                "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
-                "capacity": 100_000,
-                "alpha": 0.8,
-                "beta": 0.4,
-            },
-            train_batch_size_per_learner=512,
-            num_steps_sampled_before_learning_starts=300,
-            initial_alpha=initial_alpha,
-        )
-
-    if config is None:
+    try:
+        builder = _ALGORITHM_CONFIG_BUILDERS[algorithm_name]
+    except KeyError:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")
+    return builder(learns_validator).framework("torch")
 
-    return config.framework("torch")
+
+def _dqn_search_space(learns_validator: bool) -> dict:
+    if learns_validator:
+        return {
+            "lr": tune.loguniform(4.5e-5, 1.0e-4),
+            "gamma": tune.uniform(0.958, 0.975),
+            "target_network_update_freq": tune.choice([1000]),
+            "n_step": tune.choice([1]),
+            "epsilon": tune.choice([
+                [(0, 1.0), (10_000, 0.05)],
+                [(0, 1.0), (20_000, 0.05)],
+            ]),
+        }
+
+    return {
+        "lr": tune.loguniform(1.9e-4, 2.8e-4),
+        "gamma": tune.uniform(0.983, 0.990),
+        "target_network_update_freq": tune.choice([500]),
+        "n_step": tune.choice([1]),
+        "epsilon": tune.choice([
+            [(0, 1.0), (180_000, 0.15), (400_000, 0.08)],
+        ]),
+        "replay_buffer_config": tune.choice([
+            _prioritized_episode_buffer(100_000, 0.8, enable_api=True),
+        ]),
+    }
+
+
+def _ppo_search_space(learns_validator: bool) -> dict:
+    if learns_validator:
+        return {
+            "lr": tune.loguniform(2.2e-4, 3.4e-4),
+            "gamma": tune.uniform(0.940, 0.955),
+            "entropy_coeff": tune.uniform(0.006, 0.013),
+            "clip_param": tune.uniform(0.17, 0.23),
+            "num_epochs": tune.choice([15]),
+        }
+    return {
+        "lr": tune.loguniform(8e-5, 1.8e-4),
+        "entropy_coeff": tune.uniform(0.015, 0.035),
+        "clip_param": tune.uniform(0.30, 0.40),
+        "num_epochs": tune.choice([30]),
+    }
+
+
+def _sac_search_space(learns_validator: bool) -> dict:
+    if learns_validator:
+        return {
+            "actor_lr": tune.loguniform(6.5e-4, 1.3e-3),
+            "critic_lr": tune.loguniform(2.8e-4, 5.6e-4),
+            "alpha_lr": tune.loguniform(2.2e-3, 4.5e-3),
+            "tau": tune.uniform(0.007, 0.011),
+            "gamma": tune.uniform(0.956, 0.969),
+            "n_step": tune.choice([1, 2]),
+            "initial_alpha": tune.uniform(0.5, 0.78),
+        }
+    return {
+        "actor_lr": tune.loguniform(1.8e-4, 3.6e-4),
+        "critic_lr": tune.loguniform(1.5e-4, 3.6e-4),
+        "alpha_lr": tune.loguniform(2.5e-3, 5e-3),
+        "tau": tune.uniform(0.005, 0.008),
+        "gamma": tune.uniform(0.985, 0.997),
+        "n_step": tune.choice([1, 2]),
+        "initial_alpha": tune.uniform(0.22, 0.50),
+        "target_entropy": tune.uniform(0.18, 0.45),
+        "replay_buffer_config": tune.choice([
+            _prioritized_episode_buffer(100_000, 0.8),
+        ]),
+    }
+
+
+_SEARCH_SPACE_BUILDERS = {
+    "dqn": _dqn_search_space,
+    "ppo": _ppo_search_space,
+    "sac": _sac_search_space,
+}
 
 
 def get_search_space(algorithm_name: str, learns_validator: bool = False) -> dict:
-    """Hyperparameter search space for Ray Tune autotune.
-    """
-
-    n_step_choices = [1, 3] if learns_validator else [1]
-    if algorithm_name == "dqn":
-        if learns_validator:
-            epsilon_choices = [
-                [(0, 1.0), (10_000, 0.05)],  
-                [(0, 1.0), (30_000, 0.05)],
-                [(0, 1.0), (50_000, 0.10)],
-            ]
-        else:
-
-            epsilon_choices = [
-                [(0, 1.0), (10_000, 0.05)],
-                [(0, 1.0), (50_000, 0.05)],
-                [(0, 1.0), (100_000, 0.10)],
-            ]
-        return {
-            "lr": tune.loguniform(1e-5, 3e-4),
-            "gamma": tune.uniform(0.95, 0.999),
-            "target_network_update_freq": tune.choice([200, 500, 1000]),
-            "n_step": tune.choice(n_step_choices),
-            "epsilon": tune.choice(epsilon_choices),
-        }
-    if algorithm_name == "ppo":
-        if learns_validator:
-            # Anti-oscillation: both validator runs oscillated +/-20 from
-            # ~iter 150 and never converged; the last winner paired lr=4.5e-4
-            # with num_epochs=30 on batch-512 (30 passes/iter = overshoot).
-            # Cap lr, halve epochs, tighten the trust region.
-            return {
-                "lr": tune.loguniform(1e-5, 2e-4),
-                "entropy_coeff": tune.uniform(0.0, 0.1),
-                "clip_param": tune.uniform(0.1, 0.25),
-                "num_epochs": tune.choice([5, 10]),
-            }
-        return {
-            "lr": tune.loguniform(1e-5, 1e-3),
-            "entropy_coeff": tune.uniform(0.05, 0.25),
-            "clip_param": tune.uniform(0.1, 0.4),
-            "num_epochs": tune.choice([10, 20, 30]),
-        }
-    if algorithm_name == "sac":
-        if learns_validator:
-            initial_alpha = tune.uniform(0.2, 0.8)
-            alpha_lr = tune.loguniform(3e-4, 1e-2)
-        else:
-
-            initial_alpha = tune.uniform(0.01, 0.15)
-            alpha_lr = tune.loguniform(1e-3, 1e-2)
-        return {
-            "actor_lr": tune.loguniform(1e-5, 1e-3),
-            "critic_lr": tune.loguniform(1e-5, 1e-3),
-            "alpha_lr": alpha_lr,
-            "tau": tune.uniform(0.001, 0.01),
-            "gamma": tune.uniform(0.95, 0.999),
-            "n_step": tune.choice(n_step_choices),
-            "initial_alpha": initial_alpha,
-        }
-    raise ValueError(f"Unknown algorithm: {algorithm_name}")
+    """Hyperparameter search space for Ray Tune autotune."""
+    try:
+        builder = _SEARCH_SPACE_BUILDERS[algorithm_name]
+    except KeyError:
+        raise ValueError(f"Unknown algorithm: {algorithm_name}")
+    return builder(learns_validator)
 
 
 def add_env_config(config: AlgorithmConfig) -> AlgorithmConfig:
@@ -194,9 +243,14 @@ def agent_config_policy_mapping(
 def get_multi_agent_rl_module_specs(policy_names: list[str], agent_config: AgentConfig) -> dict[str, RLModuleSpec]:
     rl_module_specs = {}
     if ProposerPolicies.LEARNED in policy_names:
+        proposer_model_config = (
+            DQN_PROPOSER_MODEL_CONFIG
+            if agent_config.algorithm_name == "dqn"
+            else DEFAULT_MULTI_AGENT_MODEL_CONFIG
+        )
         rl_module_specs[ProposerPolicies.LEARNED] = RLModuleSpec(
             module_class=PROPOSER_ALGORITHM_MODULES[agent_config.algorithm_name],
-            model_config=DEFAULT_MULTI_AGENT_MODEL_CONFIG,
+            model_config=proposer_model_config,
             catalog_class=CATALOG_CLASS[agent_config.algorithm_name],
         )
 

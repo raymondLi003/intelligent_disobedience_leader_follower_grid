@@ -227,3 +227,5 @@ eval_results/
 backups/
 curves/
 plot_curves.py
+idg_colab_seeds
+idg_exp_seed_output
