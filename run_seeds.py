@@ -60,6 +60,8 @@ from utils import (
 PAIRINGS = {
     "learned_proposer": (ProposerPolicies.LEARNED, ValidatorPolicies.PERFECT),
     "perfect_proposer": (ProposerPolicies.PERFECT, ValidatorPolicies.LEARNED),
+    "always_approve": (ProposerPolicies.LEARNED, ValidatorPolicies.ALWAYS_APPROVE),
+    "random_proposer": (ProposerPolicies.RANDOM, ValidatorPolicies.LEARNED),
 }
 
 

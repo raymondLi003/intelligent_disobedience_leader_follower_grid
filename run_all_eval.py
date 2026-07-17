@@ -26,7 +26,7 @@ from eval_common import (
     resolve_variations,
     run_pairing,
 )
-from llm_validator_no_strat import LLMValidatorNoStrat
+from llm_validator_no_strat import LLMValidatorNoStrat, LLMValidatorNoStratExplain
 from ray.rllib.examples.rl_modules.classes.random_rlm import RandomRLModule
 from utils import AGENT_CONFIGS, LOG_DIR, ProposerPolicies, ValidatorPolicies, GRID_SIZE, NUM_LAVA_TILES
 
@@ -100,21 +100,24 @@ def main():
         "--only",
         type=str,
         default=None,
-        help="comma-separated substrings; only run pairings whose name matches one. "
-             "e.g. --only ppo_perfect_proposer_x_learned_validator",
     )
     parser.add_argument(
         "--llm-levels",
         type=str,
         default="1,2,3",
-        help="comma-separated LLM complexity levels to eval (1=rudimentary, 2=mid, "
-             "3=frontier). e.g. --llm-levels 1 or --llm-levels 1,3",
+    )
+    parser.add_argument(
+        "--llm-explain",
+        action="store_true",
     )
     args = parser.parse_args()
 
     llm_levels = [int(x) for x in args.llm_levels.split(",") if x.strip()]
     llm_models = select_llm_models(llm_levels)
-    print(f"LLM levels {llm_levels} -> {len(llm_models)} model(s): {[m[0] for m in llm_models]}")
+    llm_base = LLMValidatorNoStratExplain if args.llm_explain else LLMValidatorNoStrat
+    llm_suffix = "__explain" if args.llm_explain else ""
+    print(f"LLM levels {llm_levels} -> {len(llm_models)} model(s): {[m[0] for m in llm_models]}"
+          f"{' [EXPLAIN mode]' if args.llm_explain else ''}")
 
     ray.init(ignore_reinit_error=True)
     register_env("env", lambda _: GridWorldEnv(GRID_SIZE, num_lava_tiles=NUM_LAVA_TILES, single_agent=False))
@@ -138,11 +141,11 @@ def main():
 
     # LLM validators paired with the perfect (BFS) proposer
     for display_name, model_name in llm_models:
-        validator_class = _make_llm_validator_class(LLMValidatorNoStrat, model_name)
+        validator_class = _make_llm_validator_class(llm_base, model_name)
         # bind vars as defaults so each lambda captures the right class
         llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
         pairings.append((
-            f"perfect_x_llm_{display_name}",
+            f"perfect_x_llm_{display_name}{llm_suffix}",
             perfect_proposer_factory,
             llm_factory,
         ))
