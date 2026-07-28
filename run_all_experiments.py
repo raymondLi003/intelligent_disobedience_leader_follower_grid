@@ -1,22 +1,7 @@
-"""Train every combination for the IDG experiments.
-
-Trains 4 pairings x 3 algorithms = 12 models on a 3x3 grid with 2 lava tiles:
-
-  - Random proposer    x Learned validator    (validator learns)
-  - Learned proposer   x Always-approve validator  (proposer learns)
-  - Learned proposer   x Perfect validator    (proposer learns)
-  - Perfect proposer   x Learned validator    (validator learns)
-
-Each pairing is trained under DQN, PPO, and SAC.
-
-We do not train the LLM, so only in the eval we include the llm validator
-
-After the training completion, a summary mapping each experiment to its search space, 
-final hyperparameter configs, and final metrics is saved to: 
-logs/tune/all_experiments_summary.json.
+"""Train every proposer/validator pairing across DQN, PPO, and SAC.
 
 Usage:
-    python run_all_experiments.py                # full run 
+    python run_all_experiments.py                # full run
     python run_all_experiments.py --iters 200    # if want to customize iterations
     python run_all_experiments.py --samples 16    # activate autotune and run 16 samples
 """
@@ -26,8 +11,7 @@ import json
 import os
 from pathlib import Path
 
-# Disable Ray's new AIR progress output BEFORE importing ray
-# otherwise the AIR reporter dumps the entire dict in the output 
+# silence Ray AIR progress spam
 os.environ.setdefault("RAY_AIR_NEW_OUTPUT", "0")
 
 import numpy as np
@@ -62,8 +46,7 @@ from utils import (
 )
 
 
-# proposer_policy & validator_policy
-# LEARNED is the side that gets trained.
+# LEARNED is the side that gets trained
 PAIRINGS = [
     (ProposerPolicies.RANDOM, ValidatorPolicies.LEARNED),
     (ProposerPolicies.LEARNED, ValidatorPolicies.ALWAYS_APPROVE),
@@ -83,7 +66,7 @@ def experiment_name(agent_config: AgentConfig) -> str:
 
 
 def _jsonable(obj):
-    """convert an RLlib config dict to JSON-serializable form."""
+    """Convert an RLlib config dict to JSON-serializable form."""
     if isinstance(obj, dict):
         return {str(k): _jsonable(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -96,19 +79,7 @@ def _jsonable(obj):
 
 
 def metric_for(agent_config: AgentConfig) -> str:
-    """Per-policy reward metric to optimize during autotune.
-
-    Multi-agent episode_return_mean sums proposer's and validator's rewards, which can be inflated
-    by the validator harvesting reward from a bad proposer.
-    Optimize the reward of whichever side is actually learning.
-
-    There are two episode return means
-      env_runners/agent_episode_returns_mean/<agent_id>     (keyed by agent: proposer/validator)
-      env_runners/module_episode_returns_mean/<policy_name> (keyed by policy: learned_proposer/learned_validator)
-    We want the policy-keyed one so we always pick the LEARNED side.
-
-    use the eval return as the metric
-    """
+    """Per-policy reward metric to optimize during autotune."""
     if _can_true_eval(agent_config):
         return EvalReturnForwardCallback.METRIC_KEY
     if agent_config.proposer_policy == ProposerPolicies.LEARNED:
@@ -127,15 +98,14 @@ def scheduler_for(algorithm_name: str, iters: int, learns_validator: bool = Fals
     )
 
 
-# Rolling window in terms of checkpoints 
+# rolling window over checkpoints
 ROLLING_WINDOW = 3
-# Variance penalty: score = rolling_mean - STD_PENALTY * rolling_std.
+# score = rolling_mean - STD_PENALTY * rolling_std
 STD_PENALTY = 1.0
 
 
 def _rolling_best_checkpoint(result, metric: str, window: int = ROLLING_WINDOW):
-    """Choose the checkpoint at the highest variance-penalized rolling mean of `metric`.
-    """
+    """Checkpoint with the highest variance-penalized rolling mean of `metric`."""
     try:
         df = result.metrics_dataframe
         ckpts = result.best_checkpoints  # list of (Checkpoint, metrics_dict)
@@ -167,7 +137,7 @@ EVAL_DURATION = 50
 
 
 def _can_true_eval(agent_config: AgentConfig) -> bool:
-    """actual  selection for the learned prop and perfect validator"""
+    """True eval only applies to learned proposer x perfect validator."""
     return (
         agent_config.proposer_policy == ProposerPolicies.LEARNED
         and agent_config.validator_policy == ValidatorPolicies.PERFECT
@@ -175,8 +145,7 @@ def _can_true_eval(agent_config: AgentConfig) -> bool:
 
 
 def _add_evaluation(config):
-    """use a greedy fixed spawn eval
-    """
+    """Greedy fixed-spawn evaluation."""
     from ray.rllib.algorithms import AlgorithmConfig
     return config.evaluation(
         evaluation_interval=EVAL_INTERVAL,
@@ -188,7 +157,7 @@ def _add_evaluation(config):
 
 
 def _topk_checkpoints(result, metric: str, k: int = TRUE_EVAL_TOPK):
-    """rank top k checkpoints for true evaluation"""
+    """Top-k checkpoints by proxy score, for true evaluation."""
     df = result.metrics_dataframe
     ckpts = result.best_checkpoints  # list of (Checkpoint, metrics_dict)
     if df is None or metric not in df.columns or not ckpts:
@@ -206,8 +175,7 @@ def _topk_checkpoints(result, metric: str, k: int = TRUE_EVAL_TOPK):
 
 
 def _true_eval_goal_pct(ckpt: Checkpoint, variations: list) -> float:
-    """get the goal completion percentage
-    """
+    """Goal-completion percentage over the given lava variations."""
     ckpt_dir = ckpt.to_directory()
     proposer_path = (
         Path(ckpt_dir) / "learner_group" / "learner" / "rl_module" / ProposerPolicies.LEARNED
@@ -278,7 +246,7 @@ def _select_by_true_eval(full_length: list, metric: str):
 def train_one(agent_config: AgentConfig, iters: int, samples: int, seed: int | None = None) -> dict:
     config = create_rllib_config(agent_config)
     if seed is not None:
-        # run thru the seedings to check the robustness
+        # seed for robustness check
         config = config.debugging(seed=seed)
     callbacks = [ActionLoggerCallback]
     if _can_true_eval(agent_config):
@@ -292,7 +260,7 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int, seed: int | N
     tune_config = None
     progress_reporter = None
     if samples > 1:
-        # activate autotune and include which policy is getting trained
+        # autotune over the learning side's search space
         learns_validator = agent_config.validator_policy == ValidatorPolicies.LEARNED
         search_space = get_search_space(agent_config.algorithm_name, learns_validator=learns_validator)
         for key, sampler in search_space.items():
@@ -303,7 +271,7 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int, seed: int | N
             mode="max",
             scheduler=scheduler_for(agent_config.algorithm_name, iters, learns_validator=learns_validator),
         )
-        # Custom reporter to report only the necessary params
+        # report only necessary params
         progress_reporter = CLIReporter(
             parameter_columns=list(search_space.keys()),
             metric_columns={
@@ -328,7 +296,7 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int, seed: int | N
             name=name,
             callbacks=[CustomTBXLoggerCallback()],
             progress_reporter=progress_reporter,
-            # 1 = only status table. the default 3 prints the full per-iter result
+            # 1 = status table only; 3 = full per-iter result
             verbose=1,
         ),
     )
@@ -349,10 +317,10 @@ def train_one(agent_config: AgentConfig, iters: int, samples: int, seed: int | N
             print(f"  warning: no trial reached {iters} iters; falling back to all trials")
             full_length = list(results)
         if true_eval:
-            # use the actual fix-spawn eval return
+            # use the true fixed-spawn eval return
             best, best_ckpt, selection_goal_pct = _select_by_true_eval(full_length, metric)
             print(f"  selected trial by TRUE eval goal%={selection_goal_pct:.2f}")
-            if best is None:  # every true-eval failed, we fall back to proxy
+            if best is None:  # all true-evals failed. fall back to proxy
                 scored = [(r, *_rolling_best_checkpoint(r, metric)) for r in full_length]
                 best, best_ckpt, best_score = max(scored, key=lambda x: x[2])
                 print(f"  (fallback) selected trial by rolling-mean {metric}={best_score:.4f}")
@@ -463,7 +431,7 @@ def main():
                 or ac.validator_policy == ValidatorPolicies.LEARNED
             ),
         ))
-        # use the actual eval return 
+        # fixed-spawn eval env
         register_env(EVAL_ENV_NAME, lambda _, ac=agent_config: GridWorldEnv(
             size=GRID_SIZE,
             num_lava_tiles=NUM_LAVA_TILES,
@@ -477,19 +445,17 @@ def main():
         print(f"{'=' * 78}\n")
         summary.append(train_one(agent_config, args.iters, args.samples, seed=args.seed))
 
-    # make sure each run only writes to the experiments it has run
-    # so that it does not mess up the merges
+    # only write experiments this run produced, to keep merges clean
     if args.only:
         suffix = "_" + "_".join(s.strip() for s in args.only.split(",") if s.strip())
     else:
         suffix = ""
     if args.seed is not None:
-        # Keep robustness-check runs from overwriting each other or the main summary.
+        # don't overwrite other runs' summaries
         suffix += f"_seed{args.seed}"
     out = LOG_DIR / "tune" / f"all_experiments_summary{suffix}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Merge with any existing summary
     merged_by_name = {}
     if out.exists():
         try:
@@ -510,7 +476,7 @@ def main():
     print("Compact overview (all experiments, including any previously saved):")
     for entry in merged:
         m = entry.get("final_metrics") or {}
-        # episode_return_mean is nested under env_runners/ in the new RLlib API stack
+        # episode_return_mean nested under env_runners/ in the new RLlib API
         env_runners = m.get("env_runners", {}) if isinstance(m, dict) else {}
         ret = env_runners.get("episode_return_mean") if isinstance(env_runners, dict) else None
         iters_done = m.get("training_iteration") if isinstance(m, dict) else None

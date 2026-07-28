@@ -112,22 +112,24 @@ def create_algorithm_config(algorithm_name: str, learns_validator: bool = False)
 def _dqn_search_space(learns_validator: bool) -> dict:
     if learns_validator:
         return {
-            "lr": tune.loguniform(4.5e-5, 1.0e-4),
+            "lr": tune.loguniform(4.5e-5, 1.5e-4),
             "gamma": tune.uniform(0.958, 0.975),
-            "target_network_update_freq": tune.choice([1000]),
+            "target_network_update_freq": tune.choice([200, 500, 1000]),
             "n_step": tune.choice([1]),
             "epsilon": tune.choice([
+                [(0, 1.0), (120_000, 0.10), (230_000, 0.02)],
                 [(0, 1.0), (10_000, 0.05)],
                 [(0, 1.0), (20_000, 0.05)],
             ]),
         }
 
     return {
-        "lr": tune.loguniform(1.9e-4, 2.8e-4),
+        "lr": tune.loguniform(1.9e-4, 3.4e-4),
         "gamma": tune.uniform(0.983, 0.990),
         "target_network_update_freq": tune.choice([500]),
         "n_step": tune.choice([1]),
         "epsilon": tune.choice([
+            [(0, 1.0), (100_000, 0.15), (250_000, 0.05)],
             [(0, 1.0), (180_000, 0.15), (400_000, 0.08)],
         ]),
         "replay_buffer_config": tune.choice([

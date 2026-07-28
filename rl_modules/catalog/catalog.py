@@ -55,9 +55,7 @@ class PPOCatalogWithImageActionEncoder(CatalogWithImageActionEncoder, PPOCatalog
 
 class SACCatalogWithImageActionEncoder(CatalogWithImageActionEncoder, SACCatalog):
     def build_qf_encoder(self, framework: str):
-        # Discrete SAC's Q head emits one value per action
-        # the Q-encoder only needs to encode the observation. 
-        # Reuse the encoder config we built for pi
+        # discrete SAC: Q-encoder only encodes obs, reuse pi's config
         if not isinstance(self.observation_space, gym.spaces.Dict):
             return SACCatalog.build_qf_encoder(self, framework)
 

@@ -38,8 +38,7 @@ class CustomTBXLoggerCallback(TBXLoggerCallback):
 
 
 class EvalReturnForwardCallback(DefaultCallbacks):
-    """use the greedy, fixed-spawn evaluation return as the metric
-    """
+    """Use the greedy, fixed-spawn evaluation return as the metric."""
 
     METRIC_KEY = "eval_return"
 

@@ -1,46 +1,95 @@
-# The Intelligent Disobedience Game: Leader-Follower Grid Environment
+# The Intelligent Disobedience Game: Leader-Follower Grid
 
-This project is part of an ongoing research collaboration with [Prof. Reuth Mirsky](https://facultyprofiles.tufts.edu/reuth-mirsky) at Tufts University on intelligent disobedience in AI systems.
+**When should an AI agent disobey the human it's helping in order to keep them safe?**
 
-**When should an AI agent disobey its leader to prevent harm?** This repository implements a grid-based environment for studying *intelligent disobedience* — situations where an assistant deliberately overrides an instruction because it has information suggesting the action is dangerous.
+This repo is a small grid world for studying that question. It accompanies an ongoing research
+project on intelligent disobedience.
 
-📄 **Paper:** *The Intelligent Disobedience Game: Formulating Disobedience in Stackelberg Games and Markov Decision Processes* — B. Hornig, R. Mirsky (RaD-AI workshop at AAMAS '26)
 
-## Motivation
+## The idea
 
-Intelligent disobedience arises when an assistant deliberately overrides an instruction to prevent harm — like a guide dog refusing to lead its handler into oncoming traffic. As autonomous systems are increasingly deployed in collaborative roles such as assistive robotics, decision support, and teleoperation, this tension becomes practical: a human operator may propose an action that advances their objective but inadvertently introduces risk, while the automated system may possess additional information about environmental hazards. Designing protocols that allow machines to selectively disobey harmful instructions — without undermining the human's objectives — is a central challenge in shared autonomy.
+Think of a guide dog that refuses to walk its handler into traffic. The handler gives the command,
+but the dog can see a danger the handler can't. As the result, the dog disobeys on purpose to help.
 
-This project formalizes this interaction through the **Intelligent Disobedience Game (IDG)**, a sequential decision-making framework in which a leader suggests actions toward a task objective and a follower may obey or disobey to prevent harm. We characterize optimal strategies for both players, with particular attention to multi-step extensions where disobedience may have delayed consequences (safety traps).
+We call this **intelligent disobedience**, and we model it as a game between two agents:
 
-## What This Repo Contains
+- A **proposer** (the leader) suggests the next move toward a goal.
+- A **validator** (the follower) either obeys the move or blocks it.
 
-- **Grid environment** (`env.py`): A configurable leader-follower grid world where the leader issues directional commands and the follower can choose to obey or disobey based on its own local observations.
-- **RL training pipeline** (`rl_modules/`): Reinforcement learning modules for training follower agents with different disobedience policies.
-- **Experiment runner** (`run_experiments.py`): Configurable experiment scripts for evaluating obedient vs. disobedient follower strategies across varying information asymmetry conditions.
-- **Evaluation and metrics** (`eval.py`, `metrics.py`): Tools for measuring team performance, disobedience frequency, and outcome comparisons.
+The twist is **information asymmetry**: the validator can sometimes see hazards (lava tiles) that the
+proposer can't. A good validator learns to obey most of the time but step in when obeying would cause harm.
+Some maps also have **safety traps**, where a move looks fine now but leads to trouble a few steps later.
 
-## Key Concepts
+## What's in here
 
-- **Intelligent Disobedience Game (IDG)**: A sequential game where a leader suggests actions toward a task objective and a follower decides whether to obey or disobey to prevent harm.
-- **Information asymmetry**: The leader and follower have different observation spaces — the follower may detect environmental hazards invisible to the leader.
-- **Safety traps**: Multi-step scenarios where obedience appears safe in the short term but leads to delayed harmful consequences.
+The environment and the agents:
 
-## Getting Started
+- `env.py` — the grid world. A proposer suggests a direction, a validator approves or blocks it, and
+  the environment resolves what actually happens.
+- `rl_modules/` — the agents. This includes the learnable RL policies plus a few hand-written baselines:
+  a **perfect proposer** (always finds a safe path), a **perfect validator** (always makes the right
+  obey/disobey call), and an **always-approve validator** (never disobeys).
+- `config.py`, `utils.py` — settings and shared helpers (grid size, number of lava tiles, model configs, etc.).
+- `metrics.py` — logging callbacks used during training.
+
+The scripts you run:
+
+- `run_all_experiments.py` — train every combination: 4 proposer/validator pairings × 3 algorithms
+  (DQN, PPO, SAC), 12 models in total.
+- `run_seeds.py` — retrain the chosen configs across several random seeds and report mean ± std.
+- `run_all_eval.py` — evaluate the trained models (and an LLM-based validator) on a fixed set of maps,
+  print result tables, and save rollout videos.
+- `eval_common.py` — the shared rollout / metrics / table code that the eval scripts build on.
+
+Tests live in `tests/`.
+
+## Setup
 
 ```bash
 pip install -r requirements.txt
-python run_experiments.py
 ```
 
-Configuration options are in `config.py`.
+Most knobs (grid size, number of lava tiles, training iterations) live in `config.py` and `utils.py`.
 
-## Citation
+## Running it
 
+Train everything:
+
+```bash
+python run_all_experiments.py
 ```
-@inproceedings{hornig2026intelligent,
-  title={The Intelligent Disobedience Game: Formulating Disobedience in Stackelberg Games and Markov Decision Processes},
-  author={Hornig, Benedikt and Mirsky, Reuth},
-  booktitle={RaD-AI Workshop at AAMAS '26},
-  year={2026}
-}
+
+```bash
+python run_all_experiments.py --iters 200     # fewer iterations
+python run_all_experiments.py --samples 16    # turn on autotune with 16 samples
 ```
+
+Retrain the picked configs across seeds:
+
+```bash
+python run_seeds.py
+```
+
+Evaluate the trained models:
+
+```bash
+python run_all_eval.py
+```
+
+Run the tests:
+
+```bash
+python -m pytest
+```
+
+## Where the output goes
+
+A training run writes into a few folders (all git-ignored):
+
+- `logs/tune/` — one folder per pairing/algorithm, holding the Ray Tune trials, their checkpoints,
+  per-iteration metrics, and a `best_checkpoint/` with the winning model. Each algorithm also gets an
+  `all_experiments_summary_<algo>.json` summarizing the best trial per pairing.
+- `eval_results/` — one text file per pairing with goal rate, validator behavior, and other metrics.
+- `videos/` — rollout videos from evaluation.
+
+

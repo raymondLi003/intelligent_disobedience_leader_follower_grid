@@ -1,7 +1,4 @@
-"""Consolidated evaluation script for all IDG experiments.
-
-Evaluates the 12 empirical pairings (DQN, PPO, SAC) along with 
-the LLM-validator
+"""Evaluate every trained pairing plus the LLM validators.
 
 Usage:
     python run_all_eval.py
@@ -32,33 +29,38 @@ from utils import AGENT_CONFIGS, LOG_DIR, ProposerPolicies, ValidatorPolicies, G
 
 
 
-# level 1 to level 3 in terms of model advance level
-LLM_LEVELS = {
-    1: [
-        ("l1_claude_haiku3", "us.anthropic.claude-3-haiku-20240307-v1:0"),
-        ("l1_gpt_4o_mini", "4o-mini"),
-        ("l1_gemini_flash_lite", "gemini-2.5-flash-lite"),
+
+# LLM validators grouped by provider family 
+LLM_FAMILIES = {
+    "llama": [
+        ("llama4_maverick", "us.meta.llama4-maverick-17b-instruct-v1:0"),
+        ("llama4_scout", "us.meta.llama4-scout-17b-instruct-v1:0"),
     ],
-    2: [
-        ("l2_claude_haiku45", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
-        ("l2_gpt_5_mini", "gpt-5-mini"),
-        ("l2_gemini_flash", "gemini-2.5-flash"),
+    "gpt": [
+        ("gpt_5_nano", "gpt-5-nano"),
+        ("gpt_5_mini", "gpt-5-mini"),
+        ("gpt_5_2", "gpt-5.2"),
     ],
-    3: [
-        ("l3_claude_opus45", "us.anthropic.claude-opus-4-5-20251101-v1:0"),
-        ("l3_gpt_5_2", "gpt-5.2"),
-        ("l3_gemini_pro", "gemini-2.5-pro"),
+    "gemini": [
+        ("gemini_flash_lite", "gemini-2.5-flash-lite"),
+        ("gemini_flash", "gemini-2.5-flash"),
+        ("gemini_pro", "gemini-2.5-pro"),
+    ],
+    "claude": [
+        ("claude_sonnet45", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
+        ("claude_haiku45", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+        ("claude_opus45", "us.anthropic.claude-opus-4-5-20251101-v1:0"),
     ],
 }
 
 
-def select_llm_models(levels: list[int]) -> list[tuple[str, str]]:
-    """Flatten the requested complexity levels into (display_name, model_name) pairs."""
+def select_llm_models(families: list[str]) -> list[tuple[str, str]]:
+    """Flatten the requested provider families into (display_name, model_name) pairs."""
     models = []
-    for lvl in levels:
-        if lvl not in LLM_LEVELS:
-            raise ValueError(f"Unknown LLM level {lvl}; choose from {sorted(LLM_LEVELS)}")
-        models.extend(LLM_LEVELS[lvl])
+    for fam in families:
+        if fam not in LLM_FAMILIES:
+            raise ValueError(f"Unknown LLM family {fam!r}; choose from {sorted(LLM_FAMILIES)}")
+        models.extend(LLM_FAMILIES[fam])
     return models
 
 def _make_llm_validator_class(base: type, model_name: str) -> type:
@@ -80,7 +82,7 @@ def load_checkpoint_factory(exp_name: str, policy_id: str):
     def factory(env):
         checkpoint_path = LOG_DIR / "tune" / exp_name / "best_checkpoint" / "learner_group" / "learner" / "rl_module" / policy_id
         if not checkpoint_path.exists():
-            # create inference modules for non-RL modules
+            # non-RL modules
             if policy_id == ProposerPolicies.PERFECT:
                 return perfect_proposer_factory(env)
             if policy_id == ValidatorPolicies.PERFECT:
@@ -102,9 +104,10 @@ def main():
         default=None,
     )
     parser.add_argument(
-        "--llm-levels",
+        "--llm-families",
         type=str,
-        default="1,2,3",
+        default="llama,gpt,gemini,claude",
+        help="comma-separated provider families to eval (llama,gpt,gemini,claude)",
     )
     parser.add_argument(
         "--llm-explain",
@@ -112,11 +115,11 @@ def main():
     )
     args = parser.parse_args()
 
-    llm_levels = [int(x) for x in args.llm_levels.split(",") if x.strip()]
-    llm_models = select_llm_models(llm_levels)
+    llm_families = [x.strip() for x in args.llm_families.split(",") if x.strip()]
+    llm_models = select_llm_models(llm_families)
     llm_base = LLMValidatorNoStratExplain if args.llm_explain else LLMValidatorNoStrat
     llm_suffix = "__explain" if args.llm_explain else ""
-    print(f"LLM levels {llm_levels} -> {len(llm_models)} model(s): {[m[0] for m in llm_models]}"
+    print(f"LLM families {llm_families} -> {len(llm_models)} model(s): {[m[0] for m in llm_models]}"
           f"{' [EXPLAIN mode]' if args.llm_explain else ''}")
 
     ray.init(ignore_reinit_error=True)
@@ -126,10 +129,10 @@ def main():
 
     pairings = []
 
-    # Get all 12 experiment pairings automatically across algos
+    # all 12 pairings across algos
     for algo in ["dqn", "ppo", "sac"]:
         for ac in AGENT_CONFIGS:
-            # override the original agent config for eval
+            # override algo for eval
             from dataclasses import replace
             ac_algo = replace(ac, algorithm_name=algo)
             
@@ -139,10 +142,10 @@ def main():
             v_factory = load_checkpoint_factory(exp_name, ac_algo.validator_policy)
             pairings.append((shortcut_name, p_factory, v_factory))
 
-    # LLM validators paired with the perfect (BFS) proposer
+    # LLM validators vs perfect (BFS) proposer
     for display_name, model_name in llm_models:
         validator_class = _make_llm_validator_class(llm_base, model_name)
-        # bind vars as defaults so each lambda captures the right class
+        # bind class as default so each lambda captures the right one
         llm_factory = lambda env, vc=validator_class: build_inference_module(env, "validator", vc)
         pairings.append((
             f"perfect_x_llm_{display_name}{llm_suffix}",
@@ -160,13 +163,11 @@ def main():
             return
 
     results = []
-    
-    # Use output folder mapping similar to run_eval_no_llm 
+
     for name, p_factory, v_factory in pairings:
         print(f"\n>>> Running evaluation for: {name}")
-        
-        # Decide out folder logic. LLM runs get their own per-model dir so
-        # videos from different models don't overwrite each other
+
+        # per-model dir so videos don't overwrite each other
         if name.startswith("perfect_x_llm_"):
             model_slug = name[len("perfect_x_llm_"):]
             folder = f"videos/llm/{model_slug}"
@@ -183,7 +184,6 @@ def main():
                 save_video=True,
             )
             
-            # line by line eval
             print(f"\nEvaluating on {GRID_SIZE}x{GRID_SIZE} grid with {NUM_LAVA_TILES} lava tiles")
             print(f"with {name} policies.")
             print(" Proposer ".center(50, '='))

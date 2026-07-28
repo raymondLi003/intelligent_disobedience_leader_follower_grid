@@ -8,10 +8,7 @@ from rl_modules.catalog.catalog import DictEncoderConfig
 
 
 class TorchDictEncoder(TorchModel, Encoder):
-    """Torch encoder for single-level Dict observation spaces.
-
-    Concatenates outputs of sub-encoders.
-    """
+    """Torch encoder for single-level Dict observation spaces that concatenates its sub-encoder outputs."""
 
     framework = "torch"
 

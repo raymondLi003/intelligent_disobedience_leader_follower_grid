@@ -5,11 +5,7 @@ from ray.rllib.utils import override
 
 
 class DictEncoderConfig(ModelConfig):
-    """Encoder config for single-level gym.spaces.Dict observation spaces.
-
-    For each key in the Dict space, a sub-encoder config is created.
-    Outputs of all sub-encoders are concatenated.
-    """
+    """Encoder config for single-level gym.spaces.Dict observation spaces that concatenates a sub-encoder per key."""
 
     def __init__(
             self,

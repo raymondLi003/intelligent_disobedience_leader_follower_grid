@@ -1,13 +1,4 @@
-"""Shared evaluation helpers for the IDG grid-world runners.
-
-Used by:
-  - run_eval_no_llm.py      (perfect/PPO proposer x perfect/always validator)
-  - run_llm_eval_no_strat.py (same + LLM validator without strategic guidance)
-  - run_llm_eval_w_strat.py  (same + LLM validator with strategic guidance)
-
-Keeps rollout / metrics / table-printing / config-sampling code in one place so
-the runner scripts only runs the combinations and call the shared helpers, and so we can easily add new combos
-"""
+"""Shared rollout, metrics, table-printing, and config-sampling helpers for the runner scripts."""
 
 from __future__ import annotations
 
@@ -128,9 +119,7 @@ def always_approve_factory(env: GridWorldEnv) -> RLModule:
 
 
 def _extract_action(module: RLModule, out: dict) -> int:
-    """
-    do a deterministic eval
-    """
+    """Deterministic action from a module's inference output."""
     if SampleBatch.ACTIONS in out:
         return int(out[SampleBatch.ACTIONS].item())
     logits = out[SampleBatch.ACTION_DIST_INPUTS]
@@ -146,15 +135,12 @@ def run_pairing(
     save_video: bool = True,
     render: bool = True,
 ) -> dict:
-    """Run a (proposer, validator) pairing across the given lava configurations.
-
-    render=False to skip pygame so that we can avoid rendering and save time
-    """
+    """Run a (proposer, validator) pairing across the given lava configurations."""
     env = GridWorldEnv(
         size=GRID_SIZE,
         render=render,
         record_render=render,
-        # put a reasonable upper bound on steps to prevent infinite loops in case of agent running in circles
+        # cap steps to avoid infinite loops
         max_steps=128,
         single_agent=False,
         num_lava_tiles=NUM_LAVA_TILES,
@@ -169,7 +155,7 @@ def run_pairing(
     validator_actions: list[int] = []
 
     def get_action(module: RLModule, agent_id: str, obs_dict: dict) -> int:
-        # Deterministic eval for every algorithm and role
+        # deterministic eval
         batch = {SampleBatch.OBS: obs_dict[agent_id]}
         out = module.forward_inference(batch)
         return _extract_action(module, out)
@@ -197,7 +183,7 @@ def run_pairing(
             obs, rewards, terminated, truncated, _ = env.step(actions)
             if "validator" in rewards:
                 validator_rewards.append(rewards["validator"])
-                # record the validator's veto/approve so we can count true disobediences
+                # record veto/approve to count disobediences
                 validator_actions.append(actions.get("validator"))
             obs = tree.map_structure(lambda x: torch.tensor(np.expand_dims(x, axis=0)), obs)
             if truncated["__all__"]:
@@ -227,7 +213,7 @@ def run_pairing(
         "good_disobey_pct": float(np.mean(val_arr > 0.0) * 100) if len(val_arr) else 0.0,
         "bad_disobey_pct": float(np.mean(val_arr < 0.0) * 100) if len(val_arr) else 0.0,
         "n_validator_decisions": int(len(val_arr)),
-        # disobedience counts + good/bad as a share of total disobediences
+        # disobedience counts and good/bad shares
         "total_disobey": total_disobey,
         "good_disobey": good_disobey,
         "bad_disobey": bad_disobey,
@@ -259,7 +245,7 @@ def format_table(results: list[dict]) -> str:
         ("goal/N",     lambda r: f"{r['goal_wins']}/{r['n_configs']}"),
         ("val_reward", lambda r: f"{r['validator_mean_reward']:+.4f}"),
         ("wanted %",   lambda r: f"{r['wanted_pct']:6.2f}"),
-        # "/dec" = share of all validator decision. "/dis" = share of disobediences only
+        # /dec = share of all decisions; /dis = share of disobediences only
         ("good/dec %", lambda r: f"{r['good_disobey_pct']:6.2f}"),
         ("bad/dec %",  lambda r: f"{r['bad_disobey_pct']:6.2f}"),
         ("good/dis %", lambda r: f"{r.get('good_disobey_rel_pct', 0.0):6.2f}"),
@@ -347,13 +333,12 @@ def resolve_variations(args: argparse.Namespace, tag: str) -> list:
 
 
 def set_grid(args: argparse.Namespace) -> tuple[int, int]:
-    """impose --grid-size to every module that caches GRID_SIZE/NUM_LAVA_TILES
-    """
+    """Apply --grid-size to every module that caches GRID_SIZE/NUM_LAVA_TILES."""
     global GRID_SIZE, NUM_LAVA_TILES
     GRID_SIZE = args.grid_size
     NUM_LAVA_TILES = max(1, int((GRID_SIZE ** 2) * 0.25))
 
-    # Also mutate rover.utils so anything that reads utils.GRID_SIZE at call time sees the override.
+    # mutate utils so call-time reads see the override
     import utils as _utils
     _utils.GRID_SIZE = GRID_SIZE
     _utils.NUM_LAVA_TILES = NUM_LAVA_TILES

@@ -21,10 +21,8 @@ class DQNWithDictOBS(DefaultDQNTorchRLModule):
             )
         output = {}
 
-        # If we use a double-Q setup.
         if self.uses_double_q:
-            # Then we need to make a single forward pass with both,
-            # current and next observations.
+            # single forward pass over current and next obs
             if isinstance(batch[Columns.OBS], dict):
                 batch_base = {
                     Columns.OBS: tree.map_structure(
@@ -41,10 +39,8 @@ class DQNWithDictOBS(DefaultDQNTorchRLModule):
                         [batch[Columns.OBS], batch[Columns.NEXT_OBS]], dim=0
                     ),
                 }
-            # If this is a stateful module add the input states.
+            # stateful: add input states
             if Columns.STATE_IN in batch:
-                # Add both, the input state for the actual observation and
-                # the one for the next observation.
                 batch_base.update(
                     {
                         Columns.STATE_IN: tree.map_structure(
@@ -54,17 +50,15 @@ class DQNWithDictOBS(DefaultDQNTorchRLModule):
                         )
                     }
                 )
-        # Otherwise we can just use the current observations.
         else:
             batch_base = {Columns.OBS: batch[Columns.OBS]}
-            # If this is a stateful module add the input state.
+            # stateful: add input state
             if Columns.STATE_IN in batch:
                 batch_base.update({Columns.STATE_IN: batch[Columns.STATE_IN]})
 
         batch_target = {Columns.OBS: batch[Columns.NEXT_OBS]}
 
-        # If we have a stateful encoder, add the states for the target forward
-        # pass.
+        # stateful: add target-pass states
         if Columns.NEXT_STATE_IN in batch:
             batch_target.update({Columns.STATE_IN: batch[Columns.NEXT_STATE_IN]})
 
@@ -76,26 +70,22 @@ class DQNWithDictOBS(DefaultDQNTorchRLModule):
             )
         else:
             output[QF_PREDS] = qf_outs[QF_PREDS]
-        # The target Q-values for the next observations.
         qf_target_next_outs = self.forward_target(batch_target)
         output[QF_TARGET_NEXT_PREDS] = qf_target_next_outs[QF_PREDS]
-        # We are learning a Q-value distribution.
+        # distributional Q-learning
         if self.num_atoms > 1:
-            # Add distribution artefacts to the output.
-            # Distribution support.
+            # distribution support
             output[ATOMS] = qf_target_next_outs[ATOMS]
-            # Original logits from the Q-head.
             output[QF_LOGITS] = qf_outs[QF_LOGITS]
-            # Probabilities of the Q-value distribution of the current state.
+            # current-state probabilities
             output[QF_PROBS] = qf_outs[QF_PROBS]
-            # Probabilities of the target Q-value distribution of the next state.
+            # next-state target probabilities
             output[QF_TARGET_NEXT_PROBS] = qf_target_next_outs[QF_PROBS]
 
-        # Add the states to the output, if the module is stateful.
+        # stateful: add output states
         if Columns.STATE_OUT in qf_outs:
             output[Columns.STATE_OUT] = qf_outs[Columns.STATE_OUT]
-        # For correctness, also add the output states from the target forward pass.
-        # Note, we do not backpropagate through this state.
+        # no backprop through target state
         if Columns.STATE_OUT in qf_target_next_outs:
             output[Columns.NEXT_STATE_OUT] = qf_target_next_outs[Columns.STATE_OUT]
 

@@ -52,34 +52,29 @@ def egocentric_view(
     view_radius:int,
     include_lava: bool,
 )-> np.ndarray:
-    """
-        A pure egocentric and cropped view. this is shared by the env and the perfect proposer 
-        so that a predicted view always matches the real one
-    """
+    """Cropped egocentric view shared by the env and perfect proposer so predicted views match real ones."""
     s = walls.shape[0]
     full = np.zeros((s, s, 4), dtype = np.float32)
     full[:, :, 0] = walls
-    # get the agent, goal and lava positions
     full[agent_pos[0], agent_pos[1], 1] = 1.0
     full[goal_pos[0], goal_pos[1], 2] = 1.0
     for r, c in lava_positions:
         full[r, c, 3] = 1.0
-    
-    # pad the arrays up to the view radius
+
     pad = view_radius
     wall_padded = np.pad(full[:, :, 0], ((pad,pad), (pad, pad)), mode = "constant", constant_values= 1.)
     others_padded = np.pad(full[:,:,1:], ((pad,pad), (pad,pad), (0,0)), mode= "constant", constant_values= 0.)
     padded = np.concatenate((wall_padded[..., None], others_padded), axis=-1)
     
-    # center this on the agent and get the local view
+    # center on agent
     row = agent_pos[0] + pad
     col = agent_pos[1] + pad
     local = padded[row - pad: row + pad + 1, col - pad: col + pad + 1, :]
-    
-    # rotate the agent so that the agent always faces up
+
+    # rotate so agent faces up
     local = np.rot90(local, k = agent_dir, axes= (0,1))
-    
-    # keep only the agent's row and everything ahead
+
+    # keep agent's row and everything ahead
     center = local.shape[1]//2
     local = local[0:pad + 1, center - pad: center + pad + 1, :]
     
@@ -165,7 +160,6 @@ class GridWorldEnv(MultiAgentEnv):
                 }),
             }
 
-        # render
         self._pygame_initialized = False
         self._record_render = record_render
         self._frames = []
@@ -208,8 +202,7 @@ class GridWorldEnv(MultiAgentEnv):
         elif self.num_lava_tiles > 0:
             self.lava_positions = self._generate_lava_positions()
 
-        # Randomized spawn for RL training
-        # In evaluation this is disabled to reduce variance among models
+        # randomized spawn for training, off in eval
         if self.randomize_spawn:
             lava_set = set(tuple(p) for p in self.lava_positions)
             goal_cell = tuple(self.goal_pos.tolist())
@@ -306,11 +299,9 @@ class GridWorldEnv(MultiAgentEnv):
 
             if self.walls[forward_pos[0], forward_pos[1]] == 0:
                 self.agent_pos = forward_pos
-                # reward for agent at lava (terminal)
                 if tuple(self.agent_pos) in self.lava_positions:
                     self.done = True
                     return -1
-                # reward for agent at goal (terminal)
                 elif np.array_equal(self.agent_pos, self.goal_pos):
                     self.done = True
                     return 1
@@ -413,10 +404,7 @@ class GridWorldEnv(MultiAgentEnv):
             raise ValueError("Invalid agent direction.")
 
     def _get_observation(self, agent_id: str) -> np.ndarray:
-        """
-        only the lava-blind proposer drops the lava channel. 
-        the validator can see the lava
-        """
+        """only the lava-blind proposer drops the lava channel."""
         include_lava = not (agent_id == "proposer" and not self.proposer_sees_lava)
         return egocentric_view(
             self.walls,
@@ -600,7 +588,7 @@ class GridWorldEnv(MultiAgentEnv):
                         border_radius=3,
                     )
 
-        # Agent always at bottom center facing up in egocentric view
+        # agent sits bottom-center facing up
         center_c = mini_tiles_w // 2
         agent_r = mini_tiles_h - 1
 

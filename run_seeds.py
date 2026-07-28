@@ -1,16 +1,7 @@
-"""Multi-seed retraining of the autotune-selected configs (mean +/- std).
+"""Retrain the autotune-selected config across seeds and report mean +/- std.
 
-find the picked config from the autotune 
-and retrain this picked config across different seeds
-Evaluate them and find the mean and stdev 
-
-Metric output:
-  - learned proposer  (x perfect validator): goal %
-  - learned validator (x perfect proposer): validator mean reward (+ good-
-    disobedience % and wanted %)
-
-Example Usage:
-    python run_seeds.py                             
+Usage:
+    python run_seeds.py
     python run_seeds.py --algos dqn,sac --seeds 0,1,2
     python run_seeds.py --pairings learned_proposer --iters 1000
 """
@@ -56,7 +47,6 @@ from utils import (
     ValidatorPolicies,
 )
 
-# the pairings that are included
 PAIRINGS = {
     "learned_proposer": (ProposerPolicies.LEARNED, ValidatorPolicies.PERFECT),
     "perfect_proposer": (ProposerPolicies.PERFECT, ValidatorPolicies.LEARNED),
@@ -71,7 +61,7 @@ def experiment_name(ac: AgentConfig) -> str:
 
 
 def _load_winner_params(exp_name: str, summary_glob: str):
-    """find the winner params from the checkpoints."""
+    """Find the winning params in the newest matching summary."""
     best = (None, None, -1.0)  # (final_params, file, mtime)
     for path in glob.glob(summary_glob):
         try:
@@ -87,7 +77,7 @@ def _load_winner_params(exp_name: str, summary_glob: str):
 
 
 def _winner_config(ac: AgentConfig, final_params: dict, seed: int):
-    """Rebuild the config based on the chosen config from the checkpoint"""
+    """Rebuild the config with the selected hyperparameters and seed."""
     cfg = create_rllib_config(ac)
     learns_validator = ac.validator_policy == ValidatorPolicies.LEARNED
     search_keys = set(get_search_space(ac.algorithm_name, learns_validator))
@@ -126,7 +116,7 @@ def _eval_factories(ac: AgentConfig, algo):
 
 
 def _primary_metric(ac: AgentConfig) -> str:
-    # Goal-reach % for both learned prop and val
+    # goal-reach % for both learned sides
     return "goal_pct"
 
 
@@ -200,7 +190,7 @@ def main():
                 print(f"[skip] no winner found for {exp} in {args.summary}")
                 continue
 
-            # register the training env (randomized spawn, like run_all_experiments)
+            # register training env
             register_env("env", lambda _, ac=ac: GridWorldEnv(
                 size=GRID_SIZE, num_lava_tiles=NUM_LAVA_TILES, single_agent=False,
                 max_steps=MAX_ENV_STEPS, proposer_sees_lava=ac.proposer_sees_lava,

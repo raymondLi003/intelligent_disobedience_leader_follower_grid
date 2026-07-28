@@ -44,11 +44,7 @@ def _unique_goal_visible_poses(size):
 
 
 class TestBFS:
-    """Unit tests for the BFS planner inside the PerfectProposer.
-
-    These check the static _bfs_next helper directly and don't
-    require constructing an RLModule or a torch obs tensor.
-    """
+    """Unit tests for the static _bfs_next planner inside the PerfectProposer."""
 
     def test_returns_none_when_at_goal(self):
         assert PerfectProposerRLM._bfs_next((2, 2), (2, 2), size=3, blocked=set()) is None

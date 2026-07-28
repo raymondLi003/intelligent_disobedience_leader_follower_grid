@@ -128,9 +128,7 @@ class LLMProxy:
         rag_threshold: float,
         rag_k: int,
     ) -> Dict:
-        """
-        Calls the retrieval endpoint. Returns server JSON
-        """
+        """Call the retrieval endpoint and return the server JSON."""
         payload = {
             "query": query,
             "session_id": session_id,
@@ -140,9 +138,7 @@ class LLMProxy:
         return self._post_json("retrieve", payload)
 
     def model_info(self) -> Dict:
-        """
-        Fetches model info.
-        """
+        """Fetch model info."""
         return self._post_json("model_info", {})
 
     def generate(
@@ -157,9 +153,7 @@ class LLMProxy:
         rag_usage: Optional[bool] = False,
         rag_k: Optional[int] = 5,
     ) -> Dict:
-        """
-        Calls the text generation endpoint and returns parsed fields plus the raw payload.
-        """
+        """Call the text generation endpoint and return the parsed fields plus the raw payload."""
         payload = {
             "model": model,
             "system": system,
@@ -174,11 +168,7 @@ class LLMProxy:
         res = self._post_json("call", payload)
         if "error" in res:
             return res
-        # Defensive extraction
         return res
-        # result_text = res.get("result")
-        # rag_context = res.get("rag_context")
-        # return {"response": result_text, "rag_context": rag_context, "raw": res}
 
     def upload_file(
         self,
@@ -188,9 +178,7 @@ class LLMProxy:
         description: Optional[str] = None,
         strategy: Optional[str] = "smart",
     ) -> Dict:
-        """
-        Generic uploader for any file. Uses streaming upload and returns server JSON or error.
-        """
+        """Upload any file via streaming and return the server JSON or error."""
         path = Path(file_path)
         if not path.exists():
             return {"error": f"File not found: {path}", "status_code": None}
@@ -243,9 +231,7 @@ class LLMProxy:
         description: Optional[str] = None,
         strategy: Optional[str] = "smart",
     ) -> Dict:
-        """
-        Uploads raw text content as a 'file' part.
-        """
+        """Upload raw text content as a 'file' part."""
         params = {
             "description": description,
             "session_id": session_id,
